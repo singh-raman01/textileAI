@@ -1,0 +1,92 @@
+{
+  "app": { "name": "TextileSearch" },
+  "nav": {
+    "search":     "Search",
+    "gallery":    "Gallery",
+    "import":     "Import",
+    "history":    "History",
+    "duplicates": "Duplicates",
+    "settings":   "Settings"
+  },
+  "search": {
+    "placeholder": "Drop or pick a fabric image to search",
+    "picking":     "Click to pick an image, or drag one here",
+    "results":     "{{count}} results",
+    "none":        "No results found.",
+    "topResults":  "Top results",
+    "searching":   "Searching…"
+  },
+  "import": {
+    "title":       "Import Library",
+    "subtitle":    "Add a folder of fabric images. All subfolders are included. New files are picked up automatically.",
+    "addFolder":   "Add folder",
+    "watched":     "Watched folders",
+    "importing":   "Importing…",
+    "complete":    "Complete",
+    "done":        "Done",
+    "starting":    "Starting…",
+    "failed":      "{{count}} failed",
+    "perMin":      "{{n}}/min",
+    "searchNow":   "Search now →",
+    "pause":       "Pause",
+    "resume":      "Resume"
+  },
+  "detail": {
+    "label":       "Label",
+    "composition": "Composition",
+    "dimensions":  "Dimensions & Weight",
+    "file":        "File",
+    "tags":        "Tags",
+    "searchSimilar": "Search similar",
+    "showInFolder": "Show in folder",
+    "needsReview":  "Needs review",
+    "noLabel":      "No label",
+    "orphaned":     "Orphaned"
+  },
+  "gallery": {
+    "filterPlaceholder": "Filter by item no. or tag…",
+    "showOrphaned":      "Show orphaned",
+    "reset":             "Reset",
+    "selected":          "{{count}} selected",
+    "clear":             "Clear",
+    "empty":             "No images found",
+    "emptyHint":         "Add a folder in Import, or clear your filters",
+    "sort": {
+      "date_desc":    "Newest first",
+      "date_asc":     "Oldest first",
+      "filename_asc": "Filename A–Z",
+      "weight_gsm":   "Weight (GSM)"
+    }
+  },
+  "duplicates": {
+    "title":        "Duplicates",
+    "showResolved": "Show resolved",
+    "markAll":      "Mark all resolved",
+    "markOne":      "Mark resolved",
+    "resolved":     "Resolved",
+    "none":         "No duplicates found",
+    "noneHint":     "Duplicate detection runs automatically during import",
+    "exact":        "Exact",
+    "visual":       "Visual",
+    "allResolved":  "All pairs resolved"
+  },
+  "settings": {
+    "title":         "Settings",
+    "language":      "Language",
+    "defaultK":      "Default results (k)",
+    "dupThreshold":  "Duplicate threshold",
+    "showOrphaned":  "Show orphaned images",
+    "thumbCache":    "Thumbnail cache",
+    "dataFolder":    "Data folder",
+    "version":       "Version",
+    "logs":          "Logs",
+    "openLogs":      "Open log folder",
+    "saving":        "Saving…",
+    "sections": {
+      "interface":   "Interface",
+      "search":      "Search",
+      "gallery":     "Gallery",
+      "about":       "About"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+# Node / Electron
+node_modules/
+out/
+dist/
+dist-electron/
+backend-dist/
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+
+# Database (runtime data — never commit)
+*.db
+*.db-shm
+*.db-wal
+
+# FAISS index (runtime data)
+*.index
+*.index.tmp
+
+# Logs (runtime data)
+logs/
+
+# Thumbnails (runtime data)
+thumbnails/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+
+# Electron builder
+dist/

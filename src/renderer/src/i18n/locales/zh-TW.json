@@ -1,0 +1,92 @@
+{
+  "app": { "name": "布料搜尋" },
+  "nav": {
+    "search":     "搜尋",
+    "gallery":    "圖庫",
+    "import":     "匯入",
+    "history":    "歷史記錄",
+    "duplicates": "重複項目",
+    "settings":   "設定"
+  },
+  "search": {
+    "placeholder": "拖放或選擇布料圖片以進行搜尋",
+    "picking":     "點擊選擇圖片，或拖放到此處",
+    "results":     "{{count}} 個結果",
+    "none":        "未找到結果",
+    "topResults":  "最多結果數",
+    "searching":   "搜尋中…"
+  },
+  "import": {
+    "title":       "匯入圖庫",
+    "subtitle":    "新增布料圖片資料夾，包含所有子資料夾。新增檔案會自動偵測。",
+    "addFolder":   "新增資料夾",
+    "watched":     "監控資料夾",
+    "importing":   "匯入中…",
+    "complete":    "完成",
+    "done":        "完成",
+    "starting":    "啟動中…",
+    "failed":      "{{count}} 個失敗",
+    "perMin":      "{{n}} 個/分鐘",
+    "searchNow":   "立即搜尋 →",
+    "pause":       "暫停",
+    "resume":      "繼續"
+  },
+  "detail": {
+    "label":        "標籤資訊",
+    "composition":  "成分",
+    "dimensions":   "尺寸與重量",
+    "file":         "檔案",
+    "tags":         "標籤",
+    "searchSimilar":"搜尋相似",
+    "showInFolder": "在資料夾中顯示",
+    "needsReview":  "需要審核",
+    "noLabel":      "無標籤",
+    "orphaned":     "檔案遺失"
+  },
+  "gallery": {
+    "filterPlaceholder": "依品項編號或標籤篩選…",
+    "showOrphaned":      "顯示遺失檔案",
+    "reset":             "重設",
+    "selected":          "已選 {{count}} 項",
+    "clear":             "清除",
+    "empty":             "未找到圖片",
+    "emptyHint":         "請在匯入頁面新增資料夾，或清除篩選條件",
+    "sort": {
+      "date_desc":    "最新優先",
+      "date_asc":     "最舊優先",
+      "filename_asc": "檔名 A–Z",
+      "weight_gsm":   "重量 (GSM)"
+    }
+  },
+  "duplicates": {
+    "title":        "重複項目",
+    "showResolved": "顯示已解決",
+    "markAll":      "全部標記為已解決",
+    "markOne":      "標記為已解決",
+    "resolved":     "已解決",
+    "none":         "未發現重複項目",
+    "noneHint":     "匯入時會自動進行重複偵測",
+    "exact":        "完全相同",
+    "visual":       "視覺相似",
+    "allResolved":  "所有配對已解決"
+  },
+  "settings": {
+    "title":         "設定",
+    "language":      "語言",
+    "defaultK":      "預設結果數量 (k)",
+    "dupThreshold":  "重複偵測閾值",
+    "showOrphaned":  "顯示遺失圖片",
+    "thumbCache":    "縮圖快取大小",
+    "dataFolder":    "資料夾位置",
+    "version":       "版本",
+    "logs":          "日誌",
+    "openLogs":      "開啟日誌資料夾",
+    "saving":        "儲存中…",
+    "sections": {
+      "interface":   "介面",
+      "search":      "搜尋",
+      "gallery":     "圖庫",
+      "about":       "關於"
+    }
+  }
+}

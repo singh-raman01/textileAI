@@ -1,0 +1,162 @@
+"""
+TextileSearch — Import API
+
+POST  /import/folder          Start importing a new folder
+GET   /import/status          Get current import progress
+POST  /import/pause
+POST  /import/resume
+POST  /import/sync-batch      Receive chokidar events from Electron
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.db.models import WatchedFolder
+from app.db.session import db_session
+from app.services.sync import SyncEvent, handle_batch, SyncBatchResult
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/import", tags=["import"])
+
+# ── Lazy references to the running ImportWorker (set by app factory) ─────────
+# These are set once at startup — treated as write-once, read-many.
+_worker: object | None = None   # ImportWorker, typed as object to avoid circular
+
+
+def set_worker(worker: object) -> None:
+    global _worker
+    _worker = worker
+
+
+def _get_worker() -> object:
+    if _worker is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Import worker not initialised.",
+        )
+    return _worker
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+class FolderImportRequest(BaseModel):
+    abs_path: str = Field(..., min_length=1)
+    display_name: str = Field("", max_length=128)
+
+
+class ImportStatusResponse(BaseModel):
+    total_queued: int
+    processed: int
+    failed: int
+    skipped: int
+    is_running: bool
+    is_paused: bool
+
+
+class SyncEventIn(BaseModel):
+    event_type: str = Field(..., pattern="^(add|unlink|change)$")
+    abs_path: str
+
+
+class SyncBatchRequest(BaseModel):
+    events: list[SyncEventIn]
+
+
+class SyncBatchResponse(BaseModel):
+    queued_for_import: int
+    orphaned: int
+    requeued: int
+    skipped: int
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/folder", status_code=status.HTTP_202_ACCEPTED)
+def start_folder_import(
+    req: FolderImportRequest,
+    session: Annotated[Session, Depends(db_session)],
+) -> dict[str, str]:
+    p = Path(req.abs_path)
+    if not p.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path is not a directory: {req.abs_path}",
+        )
+
+    # Register folder in DB (idempotent)
+    existing = (
+        session.query(WatchedFolder)
+        .filter(WatchedFolder.abs_path == str(p))
+        .first()
+    )
+    if existing is None:
+        session.add(WatchedFolder(
+            abs_path=str(p),
+            display_name=req.display_name or p.name,
+            is_available=True,
+        ))
+        session.commit()
+
+    # Tell the worker to start (idempotent)
+    worker = _get_worker()
+    worker.start()  # type: ignore[attr-defined]
+
+    return {"status": "accepted", "path": str(p)}
+
+
+@router.get("/status", response_model=ImportStatusResponse)
+def get_import_status() -> ImportStatusResponse:
+    worker = _get_worker()
+    prog = worker.get_progress()  # type: ignore[attr-defined]
+    return ImportStatusResponse(
+        total_queued=prog.total_queued,
+        processed=prog.processed,
+        failed=prog.failed,
+        skipped=prog.skipped,
+        is_running=prog.is_running,
+        is_paused=prog.is_paused,
+    )
+
+
+@router.post("/pause", )
+def pause_import() -> None:
+    worker = _get_worker()
+    worker.pause()  # type: ignore[attr-defined]
+
+
+@router.post("/resume", )
+def resume_import() -> None:
+    worker = _get_worker()
+    worker.resume()  # type: ignore[attr-defined]
+
+
+@router.post("/sync-batch", response_model=SyncBatchResponse)
+def sync_batch(
+    req: SyncBatchRequest,
+    session: Annotated[Session, Depends(db_session)],
+) -> SyncBatchResponse:
+    events = [
+        SyncEvent(
+            event_type=ev.event_type,  # type: ignore[arg-type]
+            abs_path=ev.abs_path,
+        )
+        for ev in req.events
+    ]
+    result: SyncBatchResult = handle_batch(events, session)
+    return SyncBatchResponse(
+        queued_for_import=result.queued_for_import,
+        orphaned=result.orphaned,
+        requeued=result.requeued,
+        skipped=result.skipped,
+    )
