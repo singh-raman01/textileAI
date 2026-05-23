@@ -108,6 +108,7 @@ ocr_service = init_ocr(
 
 # ── 8. Import pipeline ─────────────────────────────────────────────────────────
 from app.services.importer import init_importer
+from app.api.import_ import set_worker
 
 importer = init_importer(
     embedder       = embedder,
@@ -116,6 +117,7 @@ importer = init_importer(
     thumbnail_dir  = config.thumbnail_dir,
     disk_warning_mb= float(500),
 )
+set_worker(importer)
 
 # Auto-start worker if there are queued images
 from sqlalchemy import select, func

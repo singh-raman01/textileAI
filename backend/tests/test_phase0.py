@@ -5,15 +5,11 @@ Run with: pytest tests/ -v
 """
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-# Make the backend package importable from the tests directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────

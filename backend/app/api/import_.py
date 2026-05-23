@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import WatchedFolder
 from app.db.session import db_session
-from app.services.sync import SyncEvent, handle_batch, SyncBatchResult
+from app.services.sync import handle_batch, SyncBatchResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/import", tags=["import"])
@@ -97,12 +97,12 @@ def start_folder_import(
     # Register folder in DB (idempotent)
     existing = (
         session.query(WatchedFolder)
-        .filter(WatchedFolder.abs_path == str(p))
+        .filter(WatchedFolder.folder_path == str(p))
         .first()
     )
     if existing is None:
         session.add(WatchedFolder(
-            abs_path=str(p),
+            folder_path=str(p),
             display_name=req.display_name or p.name,
             is_available=True,
         ))
@@ -144,19 +144,13 @@ def resume_import() -> None:
 @router.post("/sync-batch", response_model=SyncBatchResponse)
 def sync_batch(
     req: SyncBatchRequest,
-    session: Annotated[Session, Depends(db_session)],
 ) -> SyncBatchResponse:
-    events = [
-        SyncEvent(
-            event_type=ev.event_type,  # type: ignore[arg-type]
-            abs_path=ev.abs_path,
-        )
-        for ev in req.events
-    ]
-    result: SyncBatchResult = handle_batch(events, session)
+    added: list[str] = [ev.abs_path for ev in req.events if ev.event_type == "add"]
+    removed: list[str] = [ev.abs_path for ev in req.events if ev.event_type == "unlink"]
+    result: SyncBatchResult = handle_batch(added, removed)
     return SyncBatchResponse(
-        queued_for_import=result.queued_for_import,
+        queued_for_import=result.queued,
         orphaned=result.orphaned,
-        requeued=result.requeued,
-        skipped=result.skipped,
+        requeued=result.renamed,
+        skipped=0,
     )

@@ -41,6 +41,7 @@ from app.exceptions import (
 from app.services.field_parser import parse_label
 from app.services.protocols import EmbedderProtocol, OcrProtocol, ThumbnailProtocol
 from app.services.faiss_index import FaissIndexManager
+from app.services.thumbnail import ThumbnailService
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +240,7 @@ class ImportWorker:
             image.import_status = "processing"
             session.flush()
 
-            path = Path(image.abs_path)
+            path = Path(image.file_path)
             if not path.exists():
                 image.import_status = "failed"
                 image.is_orphaned = True
@@ -264,7 +265,7 @@ class ImportWorker:
         try:
             result = self._embedder.embed(path)
             faiss_id = image.id       # use DB primary key as FAISS id
-            self._faiss.add([result.vector], [faiss_id])
+            self._faiss.add(faiss_id, result.vector)
             image.faiss_id = faiss_id
             image.model_version = self._embedder.model_version
         except ModelNotAvailableError:
@@ -280,9 +281,8 @@ class ImportWorker:
             return False
 
         # ── Thumbnail ─────────────────────────────────────────────────────────
-        thumb_dest = self._thumbnail_dir / f"{image.id}.jpg"
         try:
-            self._thumbnail_svc.generate(path, thumb_dest)
+            thumb_dest = self._thumbnail_svc.generate(path, image.id)
             image.thumbnail_path = str(thumb_dest)
         except ImageReadError as exc:
             logger.warning(
@@ -388,3 +388,20 @@ def reset_in_flight_images() -> int:
             "Reset in-flight images to queued", extra={"count": count}
         )
     return count
+
+
+def init_importer(
+    embedder: EmbedderProtocol,
+    ocr: OcrProtocol,
+    faiss_index: FaissIndexManager,
+    thumbnail_dir: Path,
+    disk_warning_mb: float = 500.0,
+) -> ImportWorker:
+    thumbnail_svc = ThumbnailService(thumbnail_dir)
+    return ImportWorker(
+        embedder=embedder,
+        ocr=ocr,
+        thumbnail_svc=thumbnail_svc,
+        faiss_mgr=faiss_index,
+        data_dir=thumbnail_dir,
+    )

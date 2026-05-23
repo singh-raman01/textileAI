@@ -131,7 +131,7 @@ def _row_to_response(image: ImageModel) -> ImageResponse:
         )
     return ImageResponse(
         id=image.id,
-        abs_path=image.abs_path,
+        abs_path=image.file_path,
         filename=image.filename,
         thumbnail_path=image.thumbnail_path,
         import_status=image.import_status,

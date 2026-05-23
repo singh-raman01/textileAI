@@ -91,16 +91,18 @@ def client(db_ready: bool, app_config: AppConfig) -> TestClient:
     from app.services.embedder import init_embedder
     from app.services.ocr import init_ocr
     from app.services.importer import init_importer
+    from app.api.import_ import set_worker
 
     faiss = init_faiss(app_config.faiss_dir)
     emb   = init_embedder(use_mock=True)
     ocr   = init_ocr(use_mock=True)
-    init_importer(
+    importer = init_importer(
         embedder=emb,
         ocr=ocr,
         faiss_index=faiss,
         thumbnail_dir=app_config.thumbnail_dir,
     )
+    set_worker(importer)
 
     from app import create_app
     return TestClient(create_app())

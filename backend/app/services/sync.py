@@ -21,26 +21,17 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Final, Literal
-
-from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from typing import Final
 
 from app.db.models import Image as ImageModel, WatchedFolder
 from app.db.session import get_session
-from app.exceptions import FolderUnavailableError
 
 logger = logging.getLogger(__name__)
 
-STARTUP_SYNC_WORKERS: Final[int] = 16
-ORPHAN_THRESHOLD: Final[float] = 0.80     # D9: >80% missing → folder unavailable
 SUPPORTED_EXTENSIONS: Final[frozenset[str]] = frozenset(
     {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp"}
 )
-
-EventKind = Literal["add", "remove", "change"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,230 +54,6 @@ def compute_md5(path: Path) -> str | None:
         return h.hexdigest()
     except OSError:
         return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Startup sync
-# ─────────────────────────────────────────────────────────────────────────────
-
-def startup_sync(root_folder_id: int) -> dict[str, int]:
-    """
-    Parallel existence check for all images belonging to root_folder_id.
-
-    Returns a summary dict:
-        {
-            "total": N,
-            "present": P,
-            "orphaned": O,
-            "folder_unavailable": 0|1,
-        }
-
-    Images with no root_folder_id are orphaned immediately (not counted toward
-    the threshold) — they have no folder to be "80% missing" from.
-
-    The folder is declared unavailable (not mass-orphaned) if the missing
-    fraction exceeds ORPHAN_THRESHOLD. Individual orphaned images with a
-    root_folder_id ARE marked orphaned when below the threshold.
-    """
-    with get_session() as session:
-        rows: list[ImageModel] = list(
-            session.scalars(
-                select(ImageModel).where(
-                    ImageModel.root_folder_id == root_folder_id,
-                    ImageModel.is_orphaned == False,  # noqa: E712
-                )
-            )
-        )
-
-    if not rows:
-        return {"total": 0, "present": 0, "orphaned": 0, "folder_unavailable": 0}
-
-    total = len(rows)
-    missing_ids: list[int] = []
-
-    # Parallel path-existence check
-    def _check(img: ImageModel) -> tuple[int, bool]:
-        return img.id, Path(img.file_path).exists()
-
-    with ThreadPoolExecutor(max_workers=STARTUP_SYNC_WORKERS) as pool:
-        futures = {pool.submit(_check, img): img for img in rows}
-        for fut in as_completed(futures):
-            img_id, exists = fut.result()
-            if not exists:
-                missing_ids.append(img_id)
-
-    missing_count = len(missing_ids)
-    present_count = total - missing_count
-
-    # Check orphan threshold
-    if total > 0 and missing_count / total > ORPHAN_THRESHOLD:
-        logger.warning(
-            "Folder exceeds orphan threshold — marking unavailable",
-            extra={
-                "root_folder_id": root_folder_id,
-                "missing": missing_count,
-                "total": total,
-            },
-        )
-        with get_session() as session:
-            session.execute(
-                update(WatchedFolder)
-                .where(WatchedFolder.id == root_folder_id)
-                .values(is_available=False)
-            )
-        return {
-            "total": total,
-            "present": present_count,
-            "orphaned": 0,
-            "folder_unavailable": 1,
-        }
-
-    # Individually orphan the missing images
-    if missing_ids:
-        with get_session() as session:
-            session.execute(
-                update(ImageModel)
-                .where(ImageModel.id.in_(missing_ids))
-                .values(is_orphaned=True)
-            )
-        logger.info(
-            "startup_sync: orphaned %d/%d images",
-            missing_count,
-            total,
-            extra={"root_folder_id": root_folder_id},
-        )
-
-    return {
-        "total": total,
-        "present": present_count,
-        "orphaned": missing_count,
-        "folder_unavailable": 0,
-    }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Chokidar event batch
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SyncEvent:
-    """A single file event from chokidar (forwarded via IPC)."""
-    __slots__ = ("kind", "path")
-
-    def __init__(self, kind: EventKind, path: str) -> None:
-        self.kind: EventKind = kind
-        self.path: str = path
-
-
-class BatchSyncResult:
-    """Summary of a processed chokidar event batch."""
-    __slots__ = ("added", "removed", "renamed", "skipped")
-
-    def __init__(self) -> None:
-        self.added: int = 0
-        self.removed: int = 0
-        self.renamed: int = 0
-        self.skipped: int = 0
-
-
-def handle_batch(
-    events: list[SyncEvent],
-    root_folder_id: int,
-    enqueue_for_import: "Callable[[list[str]], None]",
-) -> BatchSyncResult:
-    """
-    Process a debounced batch of chokidar events.
-
-    Rename detection:
-      An add event + a remove event in the same batch, where the new file's
-      MD5 matches the DB md5 of the old file → rename (path updated, no re-index).
-
-    Args:
-        events:             list of SyncEvent from chokidar
-        root_folder_id:     ID of the WatchedFolder this batch belongs to
-        enqueue_for_import: callback to add new paths to the import queue
-    """
-    from typing import Callable  # avoid circular import at module level
-
-    result = BatchSyncResult()
-
-    adds = [e for e in events if e.kind == "add"]
-    removes = [e for e in events if e.kind == "remove"]
-
-    # Filter unsupported extensions
-    adds = [e for e in adds if Path(e.path).suffix.lower() in SUPPORTED_EXTENSIONS]
-
-    # ── Rename detection ─────────────────────────────────────────────────────
-    if adds and removes:
-        # Build MD5 map of incoming new files
-        new_md5: dict[str, str] = {}
-        for ev in adds:
-            md5 = compute_md5(Path(ev.path))
-            if md5:
-                new_md5[ev.path] = md5
-
-        # Build MD5 → image_id map for removed paths
-        removed_paths = [e.path for e in removes]
-        with get_session() as session:
-            old_rows: list[ImageModel] = list(
-                session.scalars(
-                    select(ImageModel).where(
-                        ImageModel.file_path.in_(removed_paths)
-                    )
-                )
-            )
-        old_by_md5: dict[str, ImageModel] = {row.md5: row for row in old_rows if row.md5}
-
-        renamed_add_paths: set[str] = set()
-        renamed_remove_paths: set[str] = set()
-
-        for new_path, md5 in new_md5.items():
-            if md5 in old_by_md5:
-                old_img = old_by_md5[md5]
-                # It's a rename — update path in DB, keep all metadata
-                with get_session() as session:
-                    session.execute(
-                        update(ImageModel)
-                        .where(ImageModel.id == old_img.id)
-                        .values(file_path=new_path, is_orphaned=False)
-                    )
-                renamed_add_paths.add(new_path)
-                renamed_remove_paths.add(old_img.file_path)
-                result.renamed += 1
-                logger.debug(
-                    "Renamed",
-                    extra={"from": old_img.file_path, "to": new_path},
-                )
-
-        # Remove matched events so they don't get processed again below
-        adds = [e for e in adds if e.path not in renamed_add_paths]
-        removes = [e for e in removes if e.path not in renamed_remove_paths]
-
-    # ── New files ────────────────────────────────────────────────────────────
-    if adds:
-        new_paths = [e.path for e in adds]
-        enqueue_for_import(new_paths)
-        result.added += len(new_paths)
-
-    # ── Removed files ────────────────────────────────────────────────────────
-    if removes:
-        remove_paths = [e.path for e in removes]
-        with get_session() as session:
-            session.execute(
-                update(ImageModel)
-                .where(ImageModel.file_path.in_(remove_paths))
-                .values(is_orphaned=True)
-            )
-        result.removed += len(remove_paths)
-
-    logger.info(
-        "handle_batch complete",
-        extra={
-            "added": result.added,
-            "removed": result.removed,
-            "renamed": result.renamed,
-        },
-    )
-    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -361,13 +128,6 @@ def startup_sync() -> StartupSyncResult:
 
     with get_session() as session:
         folders = list(session.scalars(sa_select(WatchedFolder)))
-        for folder in folders:
-            # Use the underlying per-folder function (imported above has different name)
-            per = _startup_sync_impl(folder.id, session)
-            result.checked    += per.get("checked", 0)
-            result.orphaned   += per.get("orphaned", 0)
-            result.new_queued += per.get("queued", 0)
-            result.renamed    += per.get("renamed", 0)
 
         # Queue files not yet in DB
         known: set[str] = {
@@ -399,24 +159,6 @@ def startup_sync() -> StartupSyncResult:
                 result.orphaned += 1
 
     return result
-
-
-def _startup_sync_impl(folder_id: int, session: object) -> dict[str, int]:
-    """Call the original per-folder startup_sync by its renamed symbol."""
-    # The original function was renamed to _startup_sync_for_folder in the file
-    # but our rename may not have worked; fall back gracefully
-    try:
-        from app.services import sync as _sync_mod
-        fn = getattr(_sync_mod, "_startup_sync_for_folder", None)
-        if fn is not None:
-            raw = fn(folder_id, session)
-            return {"checked": getattr(raw, "checked", 0),
-                    "orphaned": getattr(raw, "orphaned", 0),
-                    "queued": getattr(raw, "queued", 0),
-                    "renamed": getattr(raw, "renamed", 0)}
-    except Exception:
-        pass
-    return {}
 
 
 def handle_batch(added: list[str], removed: list[str]) -> BatchSyncResult:

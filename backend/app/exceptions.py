@@ -1,5 +1,4 @@
-"""
-TextileSearch — Custom Exception Hierarchy
+"""TextileSearch — Custom Exception Hierarchy.
 
 All exceptions raised by the backend inherit from TextileSearchError.
 This makes error handling explicit: callers catch specific types, not broad
