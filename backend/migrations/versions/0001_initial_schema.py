@@ -1,4 +1,4 @@
-"""Initial schema — all tables
+"""Initial schema — all tables (synced to current models)
 
 Revision ID: 0001
 Revises:
@@ -19,9 +19,9 @@ def upgrade() -> None:
     op.create_table(
         'watched_folders',
         sa.Column('id',           sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('folder_path',  sa.String(),  nullable=False,   unique=True),
-        sa.Column('display_name', sa.String()),
-        sa.Column('is_available', sa.Boolean(), nullable=False, server_default='1'),
+        sa.Column('folder_path',  sa.String(1024), nullable=False, unique=True),
+        sa.Column('display_name', sa.String(256), nullable=False, server_default=''),
+        sa.Column('is_available', sa.Boolean(), nullable=False, default=True),
         sa.Column('added_at',     sa.DateTime(), server_default=sa.func.now()),
     )
 
@@ -29,186 +29,152 @@ def upgrade() -> None:
     op.create_table(
         'images',
         sa.Column('id',              sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('file_path',       sa.String(),  nullable=False,   unique=True),
-        sa.Column('filename',        sa.String(),  nullable=False),
-        sa.Column('root_folder_id',  sa.Integer(), sa.ForeignKey('watched_folders.id')),
-        sa.Column('relative_path',   sa.String()),
-        sa.Column('folder_depth',    sa.Integer()),
-        sa.Column('thumbnail_path',  sa.String()),
-        sa.Column('file_hash',       sa.String()),
-        sa.Column('faiss_id',        sa.Integer(),  unique=True),
-        sa.Column('model_version',   sa.String()),
-        sa.Column('width',           sa.Integer()),
-        sa.Column('height',          sa.Integer()),
+        sa.Column('file_path',       sa.String(1024), nullable=False, unique=True),
+        sa.Column('filename',        sa.String(512), nullable=False),
+        sa.Column('root_folder_id',  sa.Integer(), sa.ForeignKey('watched_folders.id'), index=True),
+        sa.Column('relative_path',   sa.String(1024)),
+        sa.Column('file_hash',       sa.String(64), index=True),
+        sa.Column('thumbnail_path',  sa.String(1024)),
+        sa.Column('faiss_id',        sa.Integer(), unique=True, index=True),
+        sa.Column('model_version',   sa.String(128)),
         sa.Column('file_size_bytes', sa.Integer()),
         sa.Column('image_width_px',  sa.Integer()),
-        sa.Column('image_height_px',  sa.Integer()),
-        sa.Column('last_indexed_at',   sa.DateTime()),
-        sa.Column('date_added',      sa.DateTime(), server_default=sa.func.now()),
-        sa.Column('last_seen',       sa.DateTime()),
-        sa.Column('is_orphaned',     sa.Boolean(),  default=False),
-        sa.Column('import_status',   sa.String(),   default='queued'),
+        sa.Column('image_height_px', sa.Integer()),
+        sa.Column('is_orphaned',     sa.Boolean(), nullable=False, default=False, index=True),
+        sa.Column('import_status',   sa.String(32), nullable=False, server_default='queued', index=True),
         sa.Column('import_error',    sa.Text()),
+        sa.Column('date_added',      sa.DateTime(), server_default=sa.func.now(), index=True),
+        sa.Column('last_indexed_at', sa.DateTime()),
     )
-    op.create_index('ix_images_file_hash',     'images', ['file_hash'])
-    op.create_index('ix_images_date_added',    'images', ['date_added'])
-    op.create_index('ix_images_is_orphaned',   'images', ['is_orphaned'])
-    op.create_index('ix_images_import_status', 'images', ['import_status'])
 
     # ── suppliers ──────────────────────────────────────────────────────────────
     op.create_table(
         'suppliers',
-        sa.Column('id',             sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('canonical_name', sa.String(),  nullable=False,   unique=True),
-        sa.Column('created_at',     sa.DateTime(), server_default=sa.func.now()),
+        sa.Column('id',        sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('canonical', sa.String(256), nullable=False, unique=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.func.now()),
     )
 
     # ── supplier_aliases ───────────────────────────────────────────────────────
     op.create_table(
         'supplier_aliases',
         sa.Column('id',           sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('alias',        sa.String(),  nullable=False,   unique=True),
-        sa.Column('canonical_id', sa.Integer(), sa.ForeignKey('suppliers.id'), nullable=False),
+        sa.Column('supplier_id',  sa.Integer(), sa.ForeignKey('suppliers.id'), nullable=False),
+        sa.Column('alias',        sa.String(256), nullable=False, unique=True),
     )
 
     # ── textile_metadata ───────────────────────────────────────────────────────
     op.create_table(
         'textile_metadata',
-        sa.Column('id',                sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('image_id',          sa.Integer(), sa.ForeignKey('images.id'), unique=True, nullable=False),
-        sa.Column('raw_ocr_text',      sa.Text()),
-        sa.Column('supplier_id',       sa.Integer(), sa.ForeignKey('suppliers.id')),
-        sa.Column('supplier_raw',      sa.String()),
-        sa.Column('item_no',           sa.String()),
-        sa.Column('order_no',          sa.String()),
-        sa.Column('fabric_type',       sa.String()),
-        sa.Column('construction',      sa.String()),
-        sa.Column('construction_code', sa.String()),
-        sa.Column('width_min',         sa.Float()),
-        sa.Column('width_max',         sa.Float()),
-        sa.Column('width_unit',        sa.String()),
-        sa.Column('weight_gsm',        sa.Float()),
-        sa.Column('weight_gyd',        sa.Float()),
-        sa.Column('tolerance_pct',     sa.Float()),
-        # Confidence scores
-        sa.Column('conf_supplier',     sa.Float()),
-        sa.Column('conf_item_no',      sa.Float()),
-        sa.Column('conf_order_no',     sa.Float()),
-        sa.Column('conf_fabric_type',  sa.Float()),
-        sa.Column('conf_construction', sa.Float()),
-        sa.Column('conf_width',        sa.Float()),
-        sa.Column('conf_weight_gsm',   sa.Float()),
-        sa.Column('conf_weight_gyd',   sa.Float()),
-        sa.Column('conf_composition',  sa.Float()),
-        # Tiers
-        sa.Column('tier_supplier',     sa.Integer()),
-        sa.Column('tier_item_no',      sa.Integer()),
-        sa.Column('tier_order_no',     sa.Integer()),
-        sa.Column('tier_fabric_type',  sa.Integer()),
-        sa.Column('tier_construction', sa.Integer()),
-        sa.Column('tier_width',        sa.Integer()),
-        sa.Column('tier_weight_gsm',   sa.Integer()),
-        sa.Column('tier_weight_gyd',   sa.Integer()),
-        sa.Column('tier_composition',  sa.Integer()),
-        # Review
-        sa.Column('needs_review',      sa.Boolean(), default=False),
-        sa.Column('manually_reviewed', sa.Boolean(), default=False),
-        sa.Column('no_label_detected', sa.Boolean(), default=False),
-        sa.Column('parsed_at',         sa.DateTime()),
-        sa.Column('reviewed_at',       sa.DateTime()),
+        sa.Column('id',                 sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('image_id',           sa.Integer(), sa.ForeignKey('images.id'), unique=True, nullable=False),
+        sa.Column('raw_ocr_text',       sa.Text()),
+        sa.Column('supplier',           sa.String(256), index=True),
+        sa.Column('supplier_confidence', sa.Float()),
+        sa.Column('item_no',            sa.String(128)),
+        sa.Column('order_no',           sa.String(128)),
+        sa.Column('fabric_type',        sa.String(128), index=True),
+        sa.Column('construction',       sa.String(256)),
+        sa.Column('width_min',          sa.Float()),
+        sa.Column('width_max',          sa.Float()),
+        sa.Column('width_unit',         sa.String(8)),
+        sa.Column('weight_gsm',         sa.Float()),
+        sa.Column('weight_gyd',         sa.Float()),
+        sa.Column('tolerance_pct',      sa.Float()),
+        sa.Column('needs_review',       sa.Boolean(), nullable=False, default=False),
+        sa.Column('no_label_detected',  sa.Boolean(), nullable=False, default=False),
+        sa.Column('extracted_at',       sa.DateTime(), server_default=sa.func.now()),
     )
     op.create_index('ix_textile_metadata_needs_review', 'textile_metadata', ['needs_review'])
     op.create_index('ix_textile_metadata_item_no',      'textile_metadata', ['item_no'])
     op.create_index('ix_textile_metadata_fabric_type',  'textile_metadata', ['fabric_type'])
     op.create_index('ix_textile_metadata_weight_gsm',    'textile_metadata', ['weight_gsm'])
-    op.create_index('ix_textile_metadata_supplier_id',  'textile_metadata', ['supplier_id'])
     op.create_index('ix_textile_metadata_width_min',    'textile_metadata', ['width_min'])
 
-    # ── fabric_composition ─────────────────────────────────────────────────────
+    # ── fabric_compositions ────────────────────────────────────────────────────
     op.create_table(
-        'fabric_composition',
-        sa.Column('id',           sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('metadata_id',  sa.Integer(), sa.ForeignKey('textile_metadata.id'), nullable=False),
-        sa.Column('material',     sa.String(),  nullable=False),
-        sa.Column('material_raw', sa.String()),
-        sa.Column('percentage',   sa.Float(),   nullable=False),
-        sa.Column('sort_order',   sa.Integer()),
-        sa.Column('tier',         sa.Integer()),
+        'fabric_compositions',
+        sa.Column('id',              sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('metadata_id',     sa.Integer(), sa.ForeignKey('textile_metadata.id'), nullable=False, index=True),
+        sa.Column('material',        sa.String(128), nullable=False),
+        sa.Column('material_raw',    sa.String(128), nullable=False),
+        sa.Column('percentage',      sa.Float(), nullable=False),
+        sa.Column('confidence_tier', sa.Integer(), nullable=False),
     )
-    op.create_index('ix_fabric_composition_material', 'fabric_composition', ['material'])
+    op.create_index('ix_fabric_compositions_material', 'fabric_compositions', ['material'])
 
     # ── material_aliases ───────────────────────────────────────────────────────
     op.create_table(
         'material_aliases',
         sa.Column('id',        sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('alias',     sa.String(),  nullable=False,   unique=True),
-        sa.Column('canonical', sa.String(),  nullable=False),
+        sa.Column('alias',     sa.String(128), nullable=False, unique=True),
+        sa.Column('canonical', sa.String(128), nullable=False),
     )
 
     # ── fabric_types ───────────────────────────────────────────────────────────
     op.create_table(
         'fabric_types',
         sa.Column('id',   sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('name', sa.String(),  nullable=False,   unique=True),
+        sa.Column('name', sa.String(128), nullable=False, unique=True),
     )
 
     # ── tags ───────────────────────────────────────────────────────────────────
     op.create_table(
         'tags',
-        sa.Column('id',     sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('name',   sa.String(),  nullable=False),
-        sa.Column('color',  sa.String(),  default='#6366f1'),
-        sa.Column('source', sa.String(),  nullable=False, default='manual'),
-        sa.UniqueConstraint('name', 'source'),
+        sa.Column('id',      sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('name',    sa.String(256), nullable=False, unique=True),
+        sa.Column('is_auto', sa.Boolean(), nullable=False, default=False),
     )
 
     # ── image_tags ─────────────────────────────────────────────────────────────
     op.create_table(
         'image_tags',
-        sa.Column('image_id', sa.Integer(), sa.ForeignKey('images.id'), primary_key=True),
-        sa.Column('tag_id',   sa.Integer(), sa.ForeignKey('tags.id'),   primary_key=True),
+        sa.Column('id',       sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('image_id', sa.Integer(), sa.ForeignKey('images.id'), nullable=False),
+        sa.Column('tag_id',   sa.Integer(), sa.ForeignKey('tags.id'), nullable=False),
+        sa.UniqueConstraint('image_id', 'tag_id'),
     )
 
     # ── duplicates ─────────────────────────────────────────────────────────────
     op.create_table(
         'duplicates',
-        sa.Column('id',          sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('image_id_a',  sa.Integer(), sa.ForeignKey('images.id'), nullable=False),
-        sa.Column('image_id_b',  sa.Integer(), sa.ForeignKey('images.id'), nullable=False),
-        sa.Column('similarity',  sa.Float()),
-        sa.Column('match_type',  sa.String()),
-        sa.Column('detected_at', sa.DateTime(), server_default=sa.func.now()),
-        sa.Column('resolved',    sa.Boolean(),  default=False),
+        sa.Column('id',           sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('image_id_a',   sa.Integer(), sa.ForeignKey('images.id'), nullable=False),
+        sa.Column('image_id_b',   sa.Integer(), sa.ForeignKey('images.id'), nullable=False),
+        sa.Column('is_exact_md5', sa.Boolean(), nullable=False, default=False),
+        sa.Column('similarity',   sa.Float()),
+        sa.Column('match_type',   sa.String(16), nullable=False, server_default='exact'),
+        sa.Column('resolved',     sa.Boolean(), nullable=False, default=False),
+        sa.Column('detected_at',  sa.DateTime(), server_default=sa.func.now()),
+        sa.UniqueConstraint('image_id_a', 'image_id_b'),
     )
 
     # ── search_history ─────────────────────────────────────────────────────────
     op.create_table(
         'search_history',
-        sa.Column('id',              sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('mode',            sa.String()),
-        sa.Column('query_path',      sa.String()),
-        sa.Column('query_thumbnail', sa.String()),
-        sa.Column('filters_json',    sa.Text()),
-        sa.Column('top_k',           sa.Integer()),
-        sa.Column('result_count',    sa.Integer()),
-        sa.Column('results_json',    sa.Text()),
-        sa.Column('searched_at',     sa.DateTime(), server_default=sa.func.now()),
+        sa.Column('id',               sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('query_image_path', sa.String(1024)),
+        sa.Column('k',                sa.Integer()),
+        sa.Column('result_count',     sa.Integer()),
+        sa.Column('top_result_ids',   sa.Text()),
+        sa.Column('searched_at',      sa.DateTime(), server_default=sa.func.now(), index=True),
     )
     op.create_index('ix_search_history_searched_at', 'search_history', ['searched_at'])
 
     # ── app_settings ───────────────────────────────────────────────────────────
     op.create_table(
         'app_settings',
-        sa.Column('key',   sa.String(), primary_key=True),
-        sa.Column('value', sa.String(), nullable=False),
+        sa.Column('key',   sa.String(128), primary_key=True),
+        sa.Column('value', sa.Text(), nullable=False),
     )
 
     # ── schema_version ─────────────────────────────────────────────────────────
     op.create_table(
         'schema_version',
-        sa.Column('version',     sa.Integer(), primary_key=True),
+        sa.Column('id',          sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column('version',     sa.String(32), nullable=False),
         sa.Column('applied_at',  sa.DateTime(), server_default=sa.func.now()),
-        sa.Column('description', sa.String()),
+        sa.Column('description', sa.Text(), nullable=False, server_default=''),
     )
 
     # ── Seed data ──────────────────────────────────────────────────────────────
@@ -219,16 +185,15 @@ def upgrade() -> None:
     # Record this migration
     op.execute(
         "INSERT INTO schema_version (version, description) "
-        "VALUES (1, 'Initial schema — all tables')"
+        "VALUES ('0001', 'Initial schema — synced to current models')"
     )
 
 
 def downgrade() -> None:
-    # Drop in reverse dependency order
     tables = [
         'schema_version', 'app_settings', 'search_history', 'duplicates',
         'image_tags', 'tags', 'fabric_types', 'material_aliases',
-        'fabric_composition', 'textile_metadata', 'supplier_aliases',
+        'fabric_compositions', 'textile_metadata', 'supplier_aliases',
         'suppliers', 'images', 'watched_folders',
     ]
     for table in tables:

@@ -26,7 +26,7 @@ _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 
 
-def init_db(database_url: str) -> None:
+def init_db(database_url: str, pool_size: int = 1) -> None:
     """
     Initialise the database engine and session factory.
     Must be called once at startup before any session is opened.
@@ -39,7 +39,7 @@ def init_db(database_url: str) -> None:
             "check_same_thread": False,
             "timeout":           30,
         },
-        pool_size=1,
+        pool_size=pool_size,
         max_overflow=0,
         pool_pre_ping=True,
     )

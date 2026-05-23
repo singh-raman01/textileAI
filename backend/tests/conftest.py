@@ -42,19 +42,76 @@ def app_config(tmp_data_dir: Path) -> AppConfig:
 def db_ready(app_config: AppConfig) -> bool:
     os.environ["TEXTILE_DB_URL"] = app_config.database_url
 
-    from alembic.config import Config as AlembicConfig
-    from alembic import command as alembic_command
-
-    alembic_cfg = AlembicConfig(str(Path(__file__).parent.parent / "alembic.ini"))
-    alembic_cfg.set_main_option(
-        "script_location",
-        str(Path(__file__).parent.parent / "migrations"),
-    )
-    alembic_cfg.set_main_option("sqlalchemy.url", app_config.database_url)
-    alembic_command.upgrade(alembic_cfg, "head")
-
     from app.db.session import init_db
-    init_db(app_config.database_url)
+    init_db(app_config.database_url, pool_size=5)
+
+    from app.db.base import Base
+    from app.db.session import get_engine
+    from app.db import models  # noqa: F401 — register all models
+
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    # Seed material aliases
+    with engine.connect() as conn:
+        aliases = [
+            ('POLYSTEER',    'POLYESTER'), ('POLYSTER',     'POLYESTER'),
+            ('POIYESTER',    'POLYESTER'), ('POLY',         'POLYESTER'),
+            ('PES',          'POLYESTER'), ('PET',          'POLYESTER'),
+            ('SPUNPOLYSTER', 'SPUNPOLYESTER'), ('SPUNPOLY', 'SPUNPOLYESTER'),
+            ('RYON',         'RAYON'),     ('RY',           'RAYON'),
+            ('VISCOSE',      'RAYON'),
+            ('SP',           'SPANDEX'),   ('EA',           'SPANDEX'),
+            ('ELASTANE',     'SPANDEX'),   ('LYCRA',        'SPANDEX'),
+            ('WL',           'WOOL'),      ('WO',           'WOOL'),
+            ('CT',           'COTTON'),    ('CTN',          'COTTON'),
+            ('CO',           'COTTON'),
+            ('NY',           'NYLON'),     ('PA',           'NYLON'),
+            ('ACRY',         'ACRYLIC'),   ('AC',           'ACRYLIC'),
+            ('PAN',          'ACRYLIC'),
+            ('LI',           'LINEN'),     ('FLAX',         'LINEN'),
+            ('LX',           'LUREX'),     ('METALLIC',     'LUREX'),
+        ]
+        for alias, canonical in aliases:
+            conn.execute(
+                __import__('sqlalchemy').text(
+                    "INSERT OR IGNORE INTO material_aliases (alias, canonical) VALUES (:a, :c)"
+                ), {"a": alias, "c": canonical}
+            )
+
+        types = [
+            'TWEED', 'JERSEY', 'DENIM', 'CHIFFON', 'SATIN', 'VELVET',
+            'LACE', 'KNIT', 'WOVEN', 'FLEECE', 'BROCADE', 'CREPE',
+            'ORGANZA', 'TAFFETA', 'GEORGETTE', 'POPLIN', 'CANVAS',
+            'CORDUROY', 'MUSLIN', 'VOILE', 'LAWN', 'FLANNEL', 'MESH',
+            'INTERLOCK', 'PIQUE', 'PONTE', 'SCUBA', 'TERRY', 'VELOUR',
+        ]
+        for t in types:
+            conn.execute(
+                __import__('sqlalchemy').text(
+                    "INSERT OR IGNORE INTO fabric_types (name) VALUES (:n)"
+                ), {"n": t}
+            )
+
+        defaults = [
+            ('default_k',                    '20'),
+            ('duplicate_threshold',          '0.97'),
+            ('history_retention_days',       '365'),
+            ('disk_space_warning_mb',        '500'),
+            ('thumbnail_cache_max_mb',       '2048'),
+            ('include_unverified_in_filters','true'),
+            ('language',                     'en'),
+            ('theme',                        'system'),
+            ('debug_logging',                'false'),
+        ]
+        for key, value in defaults:
+            conn.execute(
+                __import__('sqlalchemy').text(
+                    "INSERT OR IGNORE INTO app_settings (key, value) VALUES (:k, :v)"
+                ), {"k": key, "v": value}
+            )
+        conn.commit()
+
     return True
 
 
@@ -88,14 +145,14 @@ def client(db_ready: bool, app_config: AppConfig) -> TestClient:
     os.environ["TEXTILE_USE_MOCK_ML"] = "true"
 
     from app.services.faiss_index import init_faiss
-    from app.services.embedder import init_embedder
-    from app.services.ocr import init_ocr
     from app.services.importer import init_importer
     from app.api.import_ import set_worker
+    from app.api.images import set_search_deps
 
     faiss = init_faiss(app_config.faiss_dir)
-    emb   = init_embedder(use_mock=True)
-    ocr   = init_ocr(use_mock=True)
+    emb = MockEmbedder()
+    ocr = MockOcrService()
+
     importer = init_importer(
         embedder=emb,
         ocr=ocr,
@@ -103,6 +160,7 @@ def client(db_ready: bool, app_config: AppConfig) -> TestClient:
         thumbnail_dir=app_config.thumbnail_dir,
     )
     set_worker(importer)
+    set_search_deps(embedder=emb, faiss=faiss)
 
     from app import create_app
     return TestClient(create_app())

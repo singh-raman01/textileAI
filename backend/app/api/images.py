@@ -230,7 +230,7 @@ async def visual_search(
     images.sort(key=lambda img: score_map.get(img.faiss_id or -1, 0.0), reverse=True)
     images = images[:k]
 
-    total_in_index = _faiss.stats().total_vectors  # type: ignore[attr-defined]
+    total_in_index = _faiss.ntotal  # type: ignore[attr-defined]
     truncated = k >= total_in_index
 
     return SearchResponse(

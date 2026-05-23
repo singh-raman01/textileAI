@@ -27,7 +27,10 @@ DEFAULT_THRESHOLD: Final[float] = 0.97
 BATCH_SIZE: Final[int] = 512   # images scanned per batch
 
 
-def run_similarity_scan(threshold: float = DEFAULT_THRESHOLD) -> int:
+def run_similarity_scan(
+    threshold: float = DEFAULT_THRESHOLD,
+    faiss_mgr: object | None = None,
+) -> int:
     """
     Scan all FAISS-indexed images for near-duplicates above `threshold`.
     Returns the number of new pairs written.
@@ -36,7 +39,8 @@ def run_similarity_scan(threshold: float = DEFAULT_THRESHOLD) -> int:
       - Importer after a batch completes (background thread)
       - POST /duplicates/scan (manual trigger, Phase 5)
     """
-    faiss_mgr = get_faiss()
+    if faiss_mgr is None:
+        faiss_mgr = get_faiss()
     if not faiss_mgr.is_ready or faiss_mgr.ntotal < 2:
         return 0
 

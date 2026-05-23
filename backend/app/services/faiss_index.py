@@ -63,6 +63,10 @@ class FaissIndexManager:
     def initialise(self) -> None:
         self.load_or_create()
 
+    def reset(self) -> None:
+        """Drop all vectors and start with an empty flat index."""
+        self._index = faiss.IndexFlatIP(self._dim)
+
     # ── Properties ──────────────────────────────────────────────────────────────
 
     @property
