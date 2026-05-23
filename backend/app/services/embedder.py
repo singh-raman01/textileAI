@@ -173,3 +173,15 @@ class MockEmbedder:
 
 # Runtime check: both classes satisfy the protocol
 assert isinstance(MockEmbedder(), EmbedderProtocol)
+
+
+def init_embedder(cache_dir: Path, use_mock: bool = False) -> FashionClipEmbedder | MockEmbedder:
+    """
+    Factory: returns a MockEmbedder when use_mock=True, otherwise a real
+    FashionClipEmbedder (model loads lazily on first embed call).
+    """
+    if use_mock:
+        logger.info("Using MockEmbedder (no ML model loaded)")
+        return MockEmbedder()
+    logger.info("Initialising FashionCLIP embedder", extra={"cache_dir": str(cache_dir)})
+    return FashionClipEmbedder(model_dir=cache_dir)

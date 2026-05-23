@@ -88,10 +88,12 @@ class TestSearch:
 
 
 class TestBrowse:
-    def test_browse_requires_filter(self, client: TestClient) -> None:
+    def test_browse_no_filters_returns_all(self, client: TestClient) -> None:
         r = client.post("/images/browse", json={})
-        assert r.status_code == 400
-        assert "D31" in r.json()["detail"]
+        assert r.status_code == 200
+        data = r.json()
+        assert "results" in data
+        assert "total" in data
 
     def test_browse_with_supplier_filter(self, client: TestClient) -> None:
         r = client.post("/images/browse", json={"supplier": "test"})
@@ -185,6 +187,6 @@ class TestGetImage:
         data = r.json()
         assert set(data.keys()) == {
             "id", "abs_path", "filename", "thumbnail_path",
-            "import_status", "is_orphaned", "faiss_id",
-            "model_version", "metadata",
+            "import_status", "is_orphaned", "date_added",
+            "faiss_id", "model_version", "metadata",
         }

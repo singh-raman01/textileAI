@@ -164,3 +164,4 @@ def client(db_ready: bool, app_config: AppConfig) -> TestClient:
 
     from app import create_app
     return TestClient(create_app())
+

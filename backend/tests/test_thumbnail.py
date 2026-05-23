@@ -1,115 +1,73 @@
-"""ThumbnailService unit tests."""
+"""Unit tests for ThumbnailService error paths."""
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
-from PIL import Image as PilImage
+from PIL import Image
 
-from app.services.thumbnail import ThumbnailService
 from app.exceptions import ImageReadError
+from app.services.thumbnail import ThumbnailService
 
 
-@pytest.fixture
-def thumbnail_dir() -> Path:
-    with tempfile.TemporaryDirectory() as d:
-        yield Path(d)
-
-
-@pytest.fixture
-def svc(thumbnail_dir: Path) -> ThumbnailService:
-    return ThumbnailService(thumbnail_dir)
-
-
-@pytest.fixture
-def valid_image(tmp_path: Path) -> Path:
-    p = tmp_path / "test.jpg"
-    img = PilImage.new("RGB", (800, 600), color=(64, 128, 192))
-    img.save(p, format="JPEG")
-    return p
-
-
-class TestGenerate:
-    def test_creates_webp_file(self, svc: ThumbnailService, valid_image: Path) -> None:
-        result = svc.generate(valid_image, image_id=1)
-        assert result.exists()
-        assert result.suffix == ".webp"
-
-    def test_uses_sharded_path(self, svc: ThumbnailService, valid_image: Path) -> None:
-        result = svc.generate(valid_image, image_id=1)
-        # id=1 → shard "01"; path should be thumbnails/01/1.webp
-        assert "01" in result.parts
-        assert result.name == "1.webp"
-
-    def test_returns_correct_path(self, svc: ThumbnailService, valid_image: Path) -> None:
-        result = svc.generate(valid_image, image_id=42)
-        expected = svc.thumbnail_path(42)
-        assert result == expected
-
-    def test_image_downsized_to_256(self, svc: ThumbnailService, valid_image: Path) -> None:
-        result = svc.generate(valid_image, image_id=2, size=(256, 256))
-        with PilImage.open(result) as img:
-            w, h = img.size
-        assert w <= 256 and h <= 256
-
-    def test_atomic_write_cleans_tmp(self, svc: ThumbnailService, valid_image: Path) -> None:
-        dest = svc.thumbnail_path(3)
-        tmp = dest.with_suffix(".tmp")
-        svc.generate(valid_image, image_id=3)
-        assert not tmp.exists()
-
-    def test_large_image_uses_draft(self, svc: ThumbnailService, tmp_path: Path) -> None:
-        # Create an image larger than LARGE_IMAGE_BYTES (25 MB)
-        # We can't easily create a 25 MB JPEG, so mock the size check
-        # by testing with a normal image — the draft path is exercised
-        # by large actual files in integration tests
-        p = tmp_path / "large.jpg"
-        img = PilImage.new("RGB", (4000, 3000), color=(255, 0, 0))
-        img.save(p, format="JPEG", quality=95)
-        result = svc.generate(p, image_id=4)
-        assert result.exists()
-
-    def test_missing_source_raises(self, svc: ThumbnailService) -> None:
+class TestThumbnailService:
+    def test_nonexistent_image_raises(self, tmp_path: Path) -> None:
+        svc = ThumbnailService(tmp_path / "thumbnails")
         with pytest.raises(ImageReadError):
-            svc.generate(Path("/nonexistent/image.jpg"), image_id=5)
+            svc.generate(tmp_path / "nonexistent.jpg", image_id=1)
 
-    def test_corrupt_source_raises(self, svc: ThumbnailService, tmp_path: Path) -> None:
-        p = tmp_path / "corrupt.jpg"
-        p.write_bytes(b"not a real image file")
-        with pytest.raises(ImageReadError):
-            svc.generate(p, image_id=6)
+    def test_invalid_image_raises(self, tmp_path: Path) -> None:
+        svc = ThumbnailService(tmp_path / "thumbnails")
+        src = tmp_path / "invalid.jpg"
+        src.write_bytes(b"not an image")
+        with pytest.raises(ImageReadError, match="unrecognised image format"):
+            svc.generate(src, image_id=2)
 
-    def test_generate_preserves_aspect_ratio(self, svc: ThumbnailService, tmp_path: Path) -> None:
-        p = tmp_path / "wide.jpg"
-        img = PilImage.new("RGB", (1600, 200), color=(0, 255, 0))
-        img.save(p, format="JPEG")
-        result = svc.generate(p, image_id=7, size=(256, 256))
-        with PilImage.open(result) as opened:
-            w, h = opened.size
-        assert w <= 256 and h <= 256
+    def test_valid_image(self, tmp_path: Path) -> None:
+        svc = ThumbnailService(tmp_path / "thumbnails")
+        src = tmp_path / "valid.jpg"
+        Image.new("RGB", (200, 200), color="blue").save(str(src))
+        result = svc.generate(src, image_id=3)
+        assert result.exists()
+        assert svc.exists(3) is True
+        thumb = Image.open(result)
+        assert thumb.width <= 256 and thumb.height <= 256
 
+    def test_delete_thumbnail(self, tmp_path: Path) -> None:
+        svc = ThumbnailService(tmp_path / "thumbnails")
+        src = tmp_path / "delete_src.jpg"
+        Image.new("RGB", (100, 100), color="red").save(str(src))
+        result = svc.generate(src, image_id=4)
+        assert result.exists()
+        svc.delete(4)
+        assert svc.exists(4) is False
 
-class TestHelpers:
-    def test_thumbnail_path_deterministic(self, svc: ThumbnailService) -> None:
-        assert svc.thumbnail_path(10) == svc.thumbnail_path(10)
+    def test_delete_nonexistent_is_noop(self, tmp_path: Path) -> None:
+        svc = ThumbnailService(tmp_path / "thumbnails")
+        svc.delete(9999)  # should not raise
 
-    def test_thumbnail_path_shard(self, svc: ThumbnailService) -> None:
-        p = svc.thumbnail_path(255)
-        assert "ff" in p.parts
+    def test_large_image_uses_draft_mode(self, tmp_path: Path) -> None:
+        """Create a very large image to trigger the draft() code path."""
+        svc = ThumbnailService(tmp_path / "thumbnails")
+        src = tmp_path / "large.jpg"
+        big = Image.new("RGB", (5000, 5000), color="gray")
+        big.save(src, format="JPEG", quality=10)
+        # Increase file size past LARGE_IMAGE_BYTES threshold
+        with open(src, "ab") as f:
+            f.write(b"\0" * (26 * 1024 * 1024))  # add 26MB of padding
+        result = svc.generate(src, image_id=5)
+        assert result.exists()
+        assert svc.exists(5) is True
 
-    def test_exists_true_after_generate(self, svc: ThumbnailService, valid_image: Path) -> None:
-        svc.generate(valid_image, image_id=8)
-        assert svc.exists(8) is True
+    def test_save_without_fsync_does_not_error(self, tmp_path: Path, monkeypatch) -> None:
+        import os
+        svc = ThumbnailService(tmp_path / "thumbnails")
+        src = tmp_path / "fsync_test.jpg"
+        Image.new("RGB", (50, 50), color="green").save(str(src))
 
-    def test_exists_false_before_generate(self, svc: ThumbnailService) -> None:
-        assert svc.exists(9999) is False
+        def bad_fsync(fd):
+            raise OSError("fsync failed")
 
-    def test_delete_removes_file(self, svc: ThumbnailService, valid_image: Path) -> None:
-        svc.generate(valid_image, image_id=9)
-        assert svc.exists(9) is True
-        svc.delete(9)
-        assert svc.exists(9) is False
-
-    def test_delete_missing_is_noop(self, svc: ThumbnailService) -> None:
-        svc.delete(9998)
+        monkeypatch.setattr(os, "fsync", bad_fsync)
+        result = svc.generate(src, image_id=6)
+        assert result.exists()

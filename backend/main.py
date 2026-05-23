@@ -133,7 +133,11 @@ if queued > 0:
     logger.info("Auto-starting import worker", extra={"queued": queued})
     importer.start()
 
-# ── 9. FastAPI app + uvicorn ───────────────────────────────────────────────────
+# ── 9. Wire search API deps ────────────────────────────────────────────────────
+from app.api.images import set_search_deps
+set_search_deps(embedder=embedder, faiss=faiss_manager)
+
+# ── 10. FastAPI app + uvicorn ──────────────────────────────────────────────────
 from app import create_app
 import uvicorn
 

@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, and_
+from sqlalchemy import func, select, and_
 from sqlalchemy.orm import Session
 
 from app.db.models import Image as ImageModel, TextileMetadata
@@ -68,6 +68,7 @@ class ImageResponse(BaseModel):
     thumbnail_path: str | None
     import_status: str
     is_orphaned: bool
+    date_added: str | None
     faiss_id: int | None
     model_version: str | None
     metadata: ImageMetadataResponse | None
@@ -136,6 +137,7 @@ def _row_to_response(image: ImageModel) -> ImageResponse:
         thumbnail_path=image.thumbnail_path,
         import_status=image.import_status,
         is_orphaned=image.is_orphaned,
+        date_added=str(image.date_added) if image.date_added else None,
         faiss_id=image.faiss_id,
         model_version=image.model_version,
         metadata=meta_out,
@@ -253,36 +255,18 @@ def browse_images(
     offset: int = 0,
     session: Annotated[Session, Depends(db_session)] = None,  # type: ignore[assignment]
 ) -> SearchResponse:
-    # D31: browse requires at least one filter
-    has_filter = any([
-        filters.supplier,
-        filters.fabric_type,
-        filters.min_gsm,
-        filters.max_gsm,
-        filters.min_width,
-        filters.max_width,
-        filters.needs_review is not None,
-        filters.verified_only,
-    ])
-    if not has_filter:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Browse mode requires at least one filter. (D31)",
-        )
+    base = select(ImageModel).where(ImageModel.is_orphaned == False)  # noqa: E712
+    base = _apply_filters(base, filters)
+    count_q = select(func.count()).select_from(base.subquery())
 
-    stmt = select(ImageModel).where(ImageModel.is_orphaned == False)  # noqa: E712
-    stmt = _apply_filters(stmt, filters)
-    total_stmt = stmt
-    stmt = stmt.offset(offset).limit(limit)
+    total = session.scalar(count_q) or 0
 
+    stmt = base.offset(offset).limit(limit)
     images = list(session.scalars(stmt).all())
-    total = session.scalar(
-        select(ImageModel.id).where(ImageModel.is_orphaned == False)  # noqa: E712
-    )
 
     return SearchResponse(
         results=[SearchResultItem(image=_row_to_response(img)) for img in images],
-        total=len(images),
+        total=total,
         truncated=False,
     )
 

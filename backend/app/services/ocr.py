@@ -176,3 +176,15 @@ class MockOcrService:
         )
 
 assert isinstance(MockOcrService(), OcrProtocol)
+
+
+def init_ocr(model_dir: Path, use_mock: bool = False) -> PaddleOcrService | MockOcrService:
+    """
+    Factory: returns a MockOcrService when use_mock=True, otherwise a real
+    PaddleOcrService (model loads lazily on first extract call).
+    """
+    if use_mock:
+        logger.info("Using MockOcrService (no OCR model loaded)")
+        return MockOcrService()
+    logger.info("Initialising PaddleOCR", extra={"model_dir": str(model_dir)})
+    return PaddleOcrService(model_dir=model_dir)

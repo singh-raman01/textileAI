@@ -13,26 +13,30 @@ from app.db.session import get_session
 class TestFolderImport:
     def test_start_folder_import_valid(self, client: TestClient, tmp_path: Path) -> None:
         r = client.post("/import/folder", json={
-            "abs_path": str(tmp_path),
+            "folder_path": str(tmp_path),
             "display_name": "Test Folder",
         })
         assert r.status_code == 202
-        assert r.json()["status"] == "accepted"
+        data = r.json()
+        assert "folder_id" in data
+        assert "queued_count" in data
+        assert "Folder import started" in data["message"]
+        assert "(0 images)" in data["message"]
 
     def test_start_folder_import_invalid_path(self, client: TestClient) -> None:
         r = client.post("/import/folder", json={
-            "abs_path": "/nonexistent/path",
+            "folder_path": "/nonexistent/path",
             "display_name": "Ghost",
         })
         assert r.status_code == 400
 
     def test_start_folder_import_idempotent(self, client: TestClient, tmp_path: Path) -> None:
         r1 = client.post("/import/folder", json={
-            "abs_path": str(tmp_path),
+            "folder_path": str(tmp_path),
             "display_name": "Idempotent",
         })
         r2 = client.post("/import/folder", json={
-            "abs_path": str(tmp_path),
+            "folder_path": str(tmp_path),
             "display_name": "Idempotent",
         })
         assert r1.status_code == 202
@@ -40,7 +44,7 @@ class TestFolderImport:
 
     def test_start_folder_creates_db_record(self, client: TestClient, tmp_path: Path) -> None:
         client.post("/import/folder", json={
-            "abs_path": str(tmp_path),
+            "folder_path": str(tmp_path),
             "display_name": "DB Check",
         })
         with get_session() as session:
@@ -52,7 +56,7 @@ class TestFolderImport:
 
     def test_folder_with_empty_display_name(self, client: TestClient, tmp_path: Path) -> None:
         r = client.post("/import/folder", json={
-            "abs_path": str(tmp_path),
+            "folder_path": str(tmp_path),
             "display_name": "",
         })
         assert r.status_code == 202

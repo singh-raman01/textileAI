@@ -18,9 +18,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.db.models import WatchedFolder
+from sqlalchemy import func, select
+
+from app.db.models import Image as ImageModel, WatchedFolder
 from app.db.session import db_session
-from app.services.sync import handle_batch, SyncBatchResult
+from app.services.sync import handle_batch, SyncBatchResult, _walk_supported
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/import", tags=["import"])
@@ -49,7 +51,7 @@ def _get_worker() -> object:
 # ---------------------------------------------------------------------------
 
 class FolderImportRequest(BaseModel):
-    abs_path: str = Field(..., min_length=1)
+    folder_path: str = Field(..., min_length=1)
     display_name: str = Field("", max_length=128)
 
 
@@ -86,33 +88,53 @@ class SyncBatchResponse(BaseModel):
 def start_folder_import(
     req: FolderImportRequest,
     session: Annotated[Session, Depends(db_session)],
-) -> dict[str, str]:
-    p = Path(req.abs_path)
+) -> dict[str, str | int]:
+    p = Path(req.folder_path)
     if not p.is_dir():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path is not a directory: {req.abs_path}",
+            detail=f"Path is not a directory: {req.folder_path}",
         )
 
     # Register folder in DB (idempotent)
-    existing = (
+    folder = (
         session.query(WatchedFolder)
         .filter(WatchedFolder.folder_path == str(p))
         .first()
     )
-    if existing is None:
-        session.add(WatchedFolder(
+    if folder is None:
+        folder = WatchedFolder(
             folder_path=str(p),
             display_name=req.display_name or p.name,
             is_available=True,
-        ))
+        )
+        session.add(folder)
         session.commit()
+        session.refresh(folder)
+
+    # Queue images from the folder
+    known: set[str] = {
+        row[0]
+        for row in session.execute(select(ImageModel.file_path))
+    }
+    new_count = 0
+    for img_path in _walk_supported(p):
+        if str(img_path) not in known:
+            session.add(ImageModel(
+                file_path      = str(img_path),
+                filename       = img_path.name,
+                root_folder_id = folder.id,
+                relative_path  = str(img_path.relative_to(p)),
+                import_status  = "queued",
+            ))
+            new_count += 1
+    session.commit()
 
     # Tell the worker to start (idempotent)
     worker = _get_worker()
     worker.start()  # type: ignore[attr-defined]
 
-    return {"status": "accepted", "path": str(p)}
+    return {"folder_id": folder.id, "queued_count": new_count, "message": f"Folder import started ({new_count} images)"}
 
 
 @router.get("/status", response_model=ImportStatusResponse)

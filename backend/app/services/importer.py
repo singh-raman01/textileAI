@@ -183,6 +183,8 @@ class ImportWorker:
 
     def _run(self) -> None:
         images_since_disk_check = 0
+        idle_loops = 0
+        MAX_IDLE_LOOPS = 5           # ~10 s without work → stop
 
         while not self._stop_event.is_set():
             # Respect pause
@@ -194,9 +196,15 @@ class ImportWorker:
                 batch = self._fetch_batch(session)
 
             if not batch:
+                idle_loops += 1
+                if idle_loops >= MAX_IDLE_LOOPS:
+                    logger.info("Idle timeout — worker stopping")
+                    break
                 # Nothing queued — sleep briefly then poll
-                time.sleep(2.0)
+                time.sleep(1.0)
                 continue
+
+            idle_loops = 0
 
             with self._progress_lock:
                 self._progress.total_queued += len(batch)
