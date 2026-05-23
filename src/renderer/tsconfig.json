@@ -13,19 +13,14 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
+    "baseUrl": "../..",
     "paths": {
-      "@renderer/*": [
-        "src/renderer/src/*"
-      ],
-      "@shared/*": [
-        "shared/*"
-      ]
-    },
-    "ignoreDeprecations": "6.0"
+      "@renderer/*": ["src/renderer/src/*"],
+      "@shared/*": ["shared/*"]
+    }
   },
   "include": [
-    "src/renderer/src/**/*",
-    "shared/**/*"
+    "./src/**/*",
+    "../../shared/**/*"
   ]
 }

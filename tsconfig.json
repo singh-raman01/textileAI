@@ -17,8 +17,7 @@
         "shared/*"
       ]
     },
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0"
+    "baseUrl": "."
   },
   "include": [
     "src/main/**/*",

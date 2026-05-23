@@ -28,18 +28,18 @@ export function setupLogger(): void {
   // ── File transport: one file per day, JSON format ─────────────────────────
   log.transports.file.resolvePathFn = () => path.join(logDir, todayFileName());
   log.transports.file.level = "info";
-  log.transports.file.format = (msg) => {
+  log.transports.file.format = ({ message, data }) => {
     const entry = {
-      ts: msg.date.toISOString(),
-      level: msg.level.toUpperCase(),
+      ts: message.date.toISOString(),
+      level: message.level.toUpperCase(),
       component: "electron",
-      msg: msg.data
+      msg: data
         .map((d: unknown) =>
           typeof d === "object" ? JSON.stringify(d) : String(d),
         )
         .join(" "),
     };
-    return JSON.stringify(entry);
+    return [JSON.stringify(entry)];
   };
 
   // ── Console transport: readable in dev ────────────────────────────────────
@@ -51,12 +51,12 @@ export function setupLogger(): void {
   pruneOldLogs(logDir);
 
   // ── Capture unhandled exceptions ──────────────────────────────────────────
-  log.catchErrors({
+  log.errorHandler.startCatching({
     showDialog: false,
-    onError: (error) => {
+    onError: ({ error }) => {
       logCritical("Unhandled exception", {
-        error: error.message,
-        stack: error.stack,
+        error: error?.message ?? String(error),
+        stack: error?.stack,
       });
     },
   });

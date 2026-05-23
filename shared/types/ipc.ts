@@ -18,6 +18,12 @@ export interface SidecarReadyPayload {
 }
 export interface SidecarErrorPayload { message: string }
 
+export interface SyncChangeEvent {
+  type: 'added' | 'removed' | 'renamed'
+  path: string
+  count: number
+}
+
 // ── Import ─────────────────────────────────────────────────────────────────────
 export interface ImportProgressEvent {
   totalQueued:  number

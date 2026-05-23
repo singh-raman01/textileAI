@@ -27,8 +27,11 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
 
+      - name: Lint
+        run: uv run ruff check app/
+
       - name: Type check
-        run: uv run mypy app/ --ignore-missing-imports
+        run: uv run mypy app/
 
   frontend:
     name: Frontend (Node 20)

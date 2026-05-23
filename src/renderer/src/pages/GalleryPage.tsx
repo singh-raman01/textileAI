@@ -3,7 +3,7 @@
  * Uses windowed rendering (chunk-based) to handle 50k+ thumbnails
  * without react-virtualized (no npm available yet — use CSS containment).
  */
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import type { ImageSummary, BrowseFilters } from '../../../../shared/types/ipc'
 
 const PAGE_SIZE = 100
@@ -17,13 +17,20 @@ const SORT_OPTIONS = [
 
 type SortValue = typeof SORT_OPTIONS[number]['value']
 
-const DEFAULT_FILTERS: BrowseFilters = {
-  supplierId: null, itemNoPattern: null,
-  materials: [], matchAllMaterials: false, minMaterialPct: null,
-  fabricType: null, widthMin: null, widthMax: null,
-  gsmMin: null, gsmMax: null, folderTag: null,
-  includeUnverified: true, includeOrphaned: false,
-  sortBy: 'date_desc', page: 1, pageSize: PAGE_SIZE,
+function buildFilters(
+  sortBy: SortValue,
+  showOrphaned: boolean,
+  textFilter: string,
+  page: number,
+): BrowseFilters {
+  return {
+    supplierId: null, itemNoPattern: textFilter || null,
+    materials: [], matchAllMaterials: false, minMaterialPct: null,
+    fabricType: null, widthMin: null, widthMax: null,
+    gsmMin: null, gsmMax: null, folderTag: null,
+    includeUnverified: true, includeOrphaned: showOrphaned,
+    sortBy, page, pageSize: PAGE_SIZE,
+  }
 }
 
 export function GalleryPage() {
@@ -32,15 +39,15 @@ export function GalleryPage() {
   const [page, setPage]             = useState(1)
   const [pages, setPages]           = useState(1)
   const [loading, setLoading]       = useState(false)
-  const [filters, setFilters]       = useState<BrowseFilters>(DEFAULT_FILTERS)
   const [textFilter, setTextFilter] = useState('')
   const [sortBy, setSortBy]         = useState<SortValue>('date_desc')
   const [showOrphaned, setShowOrphaned] = useState(false)
   const [selected, setSelected]     = useState<Set<number>>(new Set())
 
-  const load = useCallback(async (f: BrowseFilters) => {
+  async function load(sortBy: SortValue, showOrphaned: boolean, textFilter: string, page: number) {
     setLoading(true)
     try {
+      const f = buildFilters(sortBy, showOrphaned, textFilter, page)
       const res = await window.api.browse(f)
       setImages(res.images)
       setTotal(res.total)
@@ -51,21 +58,12 @@ export function GalleryPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }
 
-  // Initial load and on filter change
+  // Load on filter change — always reset to page 1
   useEffect(() => {
-    const f: BrowseFilters = {
-      ...filters,
-      sortBy,
-      includeOrphaned: showOrphaned,
-      page: 1,
-      // Text filter applied as item_no_pattern (simple approach for Phase 3)
-      itemNoPattern: textFilter || null,
-    }
-    setFilters(f)
-    load(f)
-  }, [sortBy, showOrphaned, textFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    load(sortBy, showOrphaned, textFilter, 1)
+  }, [sortBy, showOrphaned, textFilter])
 
   function toggleSelect(id: number) {
     setSelected(prev => {
@@ -76,9 +74,7 @@ export function GalleryPage() {
   }
 
   function changePage(p: number) {
-    const f = { ...filters, page: p }
-    setFilters(f)
-    load(f)
+    load(sortBy, showOrphaned, textFilter, p)
   }
 
   const hasFilter = textFilter || showOrphaned || sortBy !== 'date_desc'
