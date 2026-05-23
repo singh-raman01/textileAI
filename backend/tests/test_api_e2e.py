@@ -288,7 +288,9 @@ class TestImagesGetEndpoint:
         assert r.status_code == 200
         data = r.json()
         expected = {"id", "abs_path", "filename", "thumbnail_path", "import_status",
-                    "is_orphaned", "date_added", "faiss_id", "model_version", "metadata"}
+                    "is_orphaned", "date_added", "faiss_id", "model_version", "metadata",
+                    "file_hash", "file_size_bytes", "width_px", "height_px",
+                    "relative_path", "folder_name"}
         assert set(data.keys()) == expected
         with get_session() as session:
             session.query(ImageModel).filter(ImageModel.id == img_id).delete()

@@ -185,8 +185,12 @@ class TestGetImage:
 
         r = client.get(f"/images/{img_id}")
         data = r.json()
-        assert set(data.keys()) == {
+        expected_keys = {
             "id", "abs_path", "filename", "thumbnail_path",
             "import_status", "is_orphaned", "date_added",
             "faiss_id", "model_version", "metadata",
+            # extended detail fields
+            "file_hash", "file_size_bytes", "width_px", "height_px",
+            "relative_path", "folder_name",
         }
+        assert set(data.keys()) == expected_keys

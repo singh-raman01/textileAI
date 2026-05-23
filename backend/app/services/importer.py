@@ -59,7 +59,7 @@ LOCK_RETRY_DELAY_S: Final[float] = 2.0
 class ImportProgress:
     __slots__ = (
         "total_queued", "processed", "failed", "skipped",
-        "is_running", "is_paused",
+        "is_running", "is_paused", "current_file", "speed_per_min",
     )
 
     def __init__(self) -> None:
@@ -69,6 +69,8 @@ class ImportProgress:
         self.skipped: int = 0
         self.is_running: bool = False
         self.is_paused: bool = False
+        self.current_file: str = ""
+        self.speed_per_min: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +111,7 @@ class ImportWorker:
         self._progress_lock = threading.Lock()
         self._progress = ImportProgress()
         self._thread: threading.Thread | None = None
+        self._run_start_time: float | None = None
 
     # -- control -------------------------------------------------------------
 
@@ -158,6 +161,8 @@ class ImportWorker:
             snap.skipped = self._progress.skipped
             snap.is_running = self._progress.is_running
             snap.is_paused = self._progress.is_paused
+            snap.current_file = self._progress.current_file
+            snap.speed_per_min = self._progress.speed_per_min
             return snap
 
     # -- crash recovery ------------------------------------------------------
@@ -185,6 +190,7 @@ class ImportWorker:
         images_since_disk_check = 0
         idle_loops = 0
         MAX_IDLE_LOOPS = 5           # ~10 s without work → stop
+        self._run_start_time = time.monotonic()
 
         while not self._stop_event.is_set():
             # Respect pause
@@ -221,6 +227,12 @@ class ImportWorker:
 
                 self._process_one(image_id)
 
+                # Update speed after each image
+                elapsed = time.monotonic() - self._run_start_time
+                with self._progress_lock:
+                    done = self._progress.processed + self._progress.failed
+                    self._progress.speed_per_min = (done / elapsed * 60) if elapsed > 0 else 0.0
+
             # Save FAISS index after each batch
             try:
                 self._faiss.save()
@@ -243,6 +255,9 @@ class ImportWorker:
             image = session.get(ImageModel, image_id)
             if image is None:
                 return
+
+            with self._progress_lock:
+                self._progress.current_file = image.filename
 
             # Mark as processing
             image.import_status = "processing"

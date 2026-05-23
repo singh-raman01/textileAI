@@ -27,6 +27,8 @@ class DbStatusResponse(BaseModel):
     image_count:    int
     indexed_count:  int
     orphaned_count: int
+    queued_count:   int
+    failed_count:   int
     db_path:        str
     db_size_mb:     float
 
@@ -75,6 +77,12 @@ def db_status() -> DbStatusResponse:
         orphaned = session.query(func.count(Image.id)).filter(
                        Image.is_orphaned == True   # noqa: E712
                    ).scalar() or 0
+        queued   = session.query(func.count(Image.id)).filter(
+                       Image.import_status == "queued"
+                   ).scalar() or 0
+        failed   = session.query(func.count(Image.id)).filter(
+                       Image.import_status == "failed"
+                   ).scalar() or 0
 
     db_size = cfg.db_path.stat().st_size / (1024 * 1024) if cfg.db_path.exists() else 0.0
 
@@ -83,6 +91,8 @@ def db_status() -> DbStatusResponse:
         image_count    = total,
         indexed_count  = indexed,
         orphaned_count = orphaned,
+        queued_count   = queued,
+        failed_count   = failed,
         db_path        = str(cfg.db_path),
         db_size_mb     = round(db_size, 2),
     )

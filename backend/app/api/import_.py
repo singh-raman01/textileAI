@@ -62,6 +62,8 @@ class ImportStatusResponse(BaseModel):
     skipped: int
     is_running: bool
     is_paused: bool
+    current_file: str = ""
+    speed_per_min: float = 0.0
 
 
 class SyncEventIn(BaseModel):
@@ -148,6 +150,8 @@ def get_import_status() -> ImportStatusResponse:
         skipped=prog.skipped,
         is_running=prog.is_running,
         is_paused=prog.is_paused,
+        current_file=prog.current_file,
+        speed_per_min=prog.speed_per_min,
     )
 
 
@@ -161,6 +165,18 @@ def pause_import() -> None:
 def resume_import() -> None:
     worker = _get_worker()
     worker.resume()  # type: ignore[attr-defined]
+
+
+@router.post("/startup-sync")
+def startup_sync_endpoint() -> dict[str, int]:
+    """Trigger a startup file-system sync (called by Electron on app launch)."""
+    from app.services.sync import startup_sync
+    result = startup_sync()
+    return {
+        "checked": result.checked,
+        "orphaned": result.orphaned,
+        "new_queued": result.new_queued,
+    }
 
 
 @router.post("/sync-batch", response_model=SyncBatchResponse)
