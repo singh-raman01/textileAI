@@ -3,6 +3,8 @@ import path from 'path'
 import net from 'net'
 import { app } from 'electron'
 import { logInfo, logWarn, logError, logDebug } from './logger'
+import { setSidecarPort } from './ipc'
+import { setWatcherSidecarPort } from './watcher'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sidecar Manager
@@ -12,7 +14,11 @@ import { logInfo, logWarn, logError, logDebug } from './logger'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HEALTH_CHECK_INTERVAL_MS = 500
-const HEALTH_CHECK_TIMEOUT_MS  = 30_000   // 30 seconds max startup wait
+// Cold-start budget: the Python sidecar runs migrations, then loads DINOv2
+// (~340 MB download on first run) onto MPS, then loads RapidOCR onnx
+// models, then initialises FAISS. On a fresh install over a slow network
+// this can easily exceed 60s. 180s gives a generous first-run margin.
+const HEALTH_CHECK_TIMEOUT_MS  = 180_000
 const HEALTH_CHECK_URL         = (port: number) => `http://127.0.0.1:${port}/health`
 
 let sidecarProcess: ChildProcess | null = null
@@ -47,17 +53,29 @@ export async function startSidecar(dataDir: string): Promise<number> {
   const port = await getFreePort()
   sidecarPort = port
 
+  // Wire the port into the IPC bridge + watcher IMMEDIATELY (before
+  // waitForHealth). The renderer starts polling /health as soon as the
+  // window mounts; if we leave the default port 8765 in place during the
+  // first ~minute of cold-start, every poll fails with ECONNREFUSED and
+  // floods the log. Setting it here means polls hit the right port and
+  // simply fail (silently, in the try/catch) until the sidecar comes up.
+  setSidecarPort(port)
+  setWatcherSidecarPort(port)
+
   const isDev = !app.isPackaged
+
+  const backendDir = path.join(app.getAppPath(), 'backend')
 
   const { executable, args, cwd } = isDev
     ? {
-        executable: 'python3',
+        executable: 'uv',
         args: [
-          path.join(app.getAppPath(), 'backend', 'main.py'),
+          'run', 'python',
+          'main.py',
           '--port', String(port),
           '--data-dir', dataDir
         ],
-        cwd: path.join(app.getAppPath(), 'backend')
+        cwd: backendDir,
       }
     : {
         // Production: PyInstaller-bundled binary next to the app

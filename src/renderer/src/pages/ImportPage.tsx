@@ -7,6 +7,7 @@ export function ImportPage({ onDone }: Props) {
   const [progress, setProgress] = useState<ImportProgressEvent | null>(null)
   const [folders, setFolders]   = useState<string[]>([])
   const [error, setError]       = useState<string | null>(null)
+  const [scanning, setScanning] = useState<string | null>(null)
 
   // Listen for progress push events
   useEffect(() => {
@@ -21,13 +22,18 @@ export function ImportPage({ onDone }: Props) {
     try {
       const folderPath = await window.api.openFolder()
       if (!folderPath) return
-      const result = await window.api.addFolder({ folderPath, displayName: null })
+      // Show "Scanning folder…" right away so the user sees feedback
+      // during the (potentially slow) backend folder walk + DB insert.
+      setScanning(folderPath)
+      await window.api.addFolder({ folderPath, displayName: null })
       setFolders(prev => [...prev, folderPath])
       // Trigger status refresh
       const status = await window.api.importStatus()
       setProgress(status)
     } catch (e) {
       setError(String(e))
+    } finally {
+      setScanning(null)
     }
   }
 
@@ -45,13 +51,31 @@ export function ImportPage({ onDone }: Props) {
       </p>
 
       {/* Add folder button */}
-      <button className="btn btn-primary" onClick={handleAddFolder} style={{ marginBottom: 24 }}>
+      <button
+        data-testid="add-folder-btn"
+        className="btn btn-primary"
+        onClick={handleAddFolder}
+        disabled={scanning !== null}
+        style={{ marginBottom: 24, opacity: scanning !== null ? 0.6 : 1 }}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 4v16m8-8H4" />
         </svg>
-        Add folder
+        {scanning ? 'Scanning…' : 'Add folder'}
       </button>
+
+      {scanning && (
+        <div style={{ padding: '8px 12px', background: '#F0F7FF', border: '1px solid #D6E2ED',
+                      borderRadius: 5, fontSize: 12, color: 'var(--text-muted)', marginBottom: 16,
+                      display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="spinner" style={{
+            width: 12, height: 12, border: '2px solid #C5D2DD', borderTopColor: 'var(--accent, #4A6FA5)',
+            borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite',
+          }} />
+          <span>Scanning <span className="mono">{scanning}</span> for images…</span>
+        </div>
+      )}
 
       {error && (
         <div style={{ padding: '8px 12px', background: '#FFF0F0', border: '1px solid #EDD6D6',
@@ -85,7 +109,7 @@ export function ImportPage({ onDone }: Props) {
 
       {/* Progress panel — shown while running */}
       {(running || total > 0) && (
-        <div style={{
+        <div data-testid="import-progress-bar" style={{
           padding: 20, background: 'white', border: '1px solid var(--border)',
           borderRadius: 6,
         }}>
@@ -132,7 +156,7 @@ export function ImportPage({ onDone }: Props) {
               </button>
             )}
             {!running && done > 0 && (
-              <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={onDone}>
+              <button data-testid="search-now-btn" className="btn btn-primary" style={{ fontSize: 12 }} onClick={onDone}>
                 Search now →
               </button>
             )}

@@ -88,7 +88,7 @@ export function startProgressBroadcast(): void {
     try {
       const r = await get<{
         total_queued: number;
-        done: number;
+        processed: number;
         failed: number;
         skipped: number;
         is_running: boolean;
@@ -99,13 +99,13 @@ export function startProgressBroadcast(): void {
       const total = r.total_queued;
       const event: ImportProgressEvent = {
         totalQueued: total,
-        done: r.done,
+        done: r.processed,
         failed: r.failed,
         isRunning: r.is_running,
         isPaused: r.is_paused,
         currentFile: r.current_file,
         speedPerMin: r.speed_per_min,
-        percentDone: total > 0 ? Math.round((r.done / total) * 100) : 0,
+        percentDone: total > 0 ? Math.round((r.processed / total) * 100) : 0,
         // skipped: r.skipped,
       };
       win.webContents.send("import:progress", event);
@@ -126,9 +126,17 @@ export function startProgressBroadcast(): void {
 export function registerIpcHandlers(): void {
   // ── System ──────────────────────────────────────────────────────────────────
 
-  ipcMain.handle("system:health", () =>
-    get<{ status: string; version: string; uptime_s: number }>("/health"),
-  );
+  ipcMain.handle("system:health", async () => {
+    // Renderer polls this on a 1s timer until the sidecar is ready. While
+    // the Python process is still loading models (can take 60-120s on a
+    // cold start), every fetch errors with ECONNREFUSED. Return a sentinel
+    // instead of throwing so Electron doesn't log a stack trace per poll.
+    try {
+      return await get<{ status: string; version: string; uptime_s: number }>("/health");
+    } catch {
+      return { status: "starting", version: "", uptime_s: 0 };
+    }
+  });
 
   ipcMain.handle("system:db-status", () => get<DbStatusResponse>("/db/status"));
 
@@ -157,7 +165,7 @@ export function registerIpcHandlers(): void {
         message: string;
       }>("/import/folder", {
         folder_path: folderPath,
-        display_name: displayName,
+        display_name: displayName ?? "",
       });
       startProgressBroadcast();
       const result: AddFolderResult = {
@@ -172,7 +180,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("import:get-status", async () => {
     const r = await get<{
       total_queued: number;
-      done: number;
+      processed: number;
       failed: number;
       skipped: number;
       is_running: boolean;
@@ -183,14 +191,14 @@ export function registerIpcHandlers(): void {
     const total = r.total_queued;
     const result: ImportProgressEvent = {
       totalQueued: total,
-      done: r.done,
+      done: r.processed,
       failed: r.failed,
       // skipped: r.skipped,
       isRunning: r.is_running,
       isPaused: r.is_paused,
       currentFile: r.current_file,
       speedPerMin: r.speed_per_min,
-      percentDone: total > 0 ? Math.round((r.done / total) * 100) : 0,
+      percentDone: total > 0 ? Math.round((r.processed / total) * 100) : 0,
     };
     return result;
   });
@@ -225,39 +233,162 @@ export function registerIpcHandlers(): void {
         body: form,
       });
       if (!res.ok) throw new Error(`Search → ${res.status}`);
-      return res.json() as Promise<SearchResult>;
+      const raw = await res.json() as { results: Array<{ image: { id: number; filename: string; abs_path: string; thumbnail_path: string | null; import_status: string; is_orphaned: boolean; date_added: string; metadata: { supplier: string | null; item_no: string | null; weight_gsm: number | null; fabric_type: string | null; needs_review: boolean } | null }; score: number | null }>; total: number };
+      const images: SearchResult["images"] = raw.results.map(r => ({
+        id: r.image.id,
+        filename: r.image.filename,
+        filePath: r.image.abs_path,
+        thumbnailPath: r.image.thumbnail_path,
+        importStatus: r.image.import_status,
+        isOrphaned: r.image.is_orphaned,
+        dateAdded: r.image.date_added,
+        tags: [],
+        supplierRaw: r.image.metadata?.supplier ?? null,
+        itemNo: r.image.metadata?.item_no ?? null,
+        weightGsm: r.image.metadata?.weight_gsm ?? null,
+        fabricType: r.image.metadata?.fabric_type ?? null,
+        needsReview: r.image.metadata?.needs_review ?? false,
+        similarity: r.score,
+      }));
+      return { images };
     },
   );
 
   ipcMain.handle(
     "images:browse",
-    (_e: IpcMainInvokeEvent, filters: BrowseFilters) => {
-      const body = {
-        page: filters.page,
-        page_size: filters.pageSize,
-        sort_by: filters.sortBy,
-        include_unverified: filters.includeUnverified,
-        include_orphaned: filters.includeOrphaned,
-        supplier_id: filters.supplierId,
-        item_no_pattern: filters.itemNoPattern,
-        materials: filters.materials,
-        match_all_materials: filters.matchAllMaterials,
-        min_material_pct: filters.minMaterialPct,
-        fabric_type: filters.fabricType,
-        width_min: filters.widthMin,
-        width_max: filters.widthMax,
-        gsm_min: filters.gsmMin,
-        gsm_max: filters.gsmMax,
-        folder_tag: filters.folderTag,
+    async (_e: IpcMainInvokeEvent, filters: BrowseFilters) => {
+      // Map BrowseFilters (camelCase, frontend conventions) → backend ImageFilters (snake_case, API spec)
+      const body: Record<string, unknown> = {};
+      if (filters.fabricType != null)      body["fabric_type"]  = filters.fabricType;
+      if (filters.gsmMin != null)          body["min_gsm"]      = filters.gsmMin;
+      if (filters.gsmMax != null)          body["max_gsm"]      = filters.gsmMax;
+      if (filters.widthMin != null)        body["min_width"]    = filters.widthMin;
+      if (filters.widthMax != null)        body["max_width"]    = filters.widthMax;
+      // verified_only is the inverse of includeUnverified
+      if (!filters.includeUnverified)      body["verified_only"] = true;
+      // itemNoPattern → item_no partial match (backend extended field)
+      if (filters.itemNoPattern != null)   body["item_no_pattern"] = filters.itemNoPattern;
+      // include_orphaned (backend extended field)
+      if (filters.includeOrphaned)         body["include_orphaned"] = true;
+      // sort_by (backend extended field)
+      if (filters.sortBy)                  body["sort_by"] = filters.sortBy;
+
+      // Pagination: backend uses limit/offset query params
+      const limit  = filters.pageSize || 100;
+      const offset = ((filters.page || 1) - 1) * limit;
+
+      type RawImage = {
+        id: number; filename: string; abs_path: string;
+        thumbnail_path: string | null; import_status: string;
+        is_orphaned: boolean; date_added: string;
+        metadata: {
+          supplier: string | null; item_no: string | null;
+          weight_gsm: number | null; fabric_type: string | null;
+          needs_review: boolean;
+        } | null;
       };
-      return post<BrowseResult>("/images/browse", body);
+      const rawUrl = url(`/images/browse?limit=${limit}&offset=${offset}`);
+      const res = await fetch(rawUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        throw new Error(`POST /images/browse → ${res.status}: ${detail}`);
+      }
+      const raw = await res.json() as { results: Array<{ image: RawImage; score: number | null }>; total: number };
+
+      const total = raw.total;
+      const page  = filters.page || 1;
+      const pages = Math.max(1, Math.ceil(total / limit));
+
+      const images = raw.results.map((r) => ({
+        id:           r.image.id,
+        filename:     r.image.filename,
+        filePath:     r.image.abs_path,
+        thumbnailPath:r.image.thumbnail_path,
+        importStatus: r.image.import_status,
+        isOrphaned:   r.image.is_orphaned,
+        dateAdded:    r.image.date_added,
+        tags:         [],
+        supplierRaw:  r.image.metadata?.supplier ?? null,
+        itemNo:       r.image.metadata?.item_no ?? null,
+        weightGsm:    r.image.metadata?.weight_gsm ?? null,
+        fabricType:   r.image.metadata?.fabric_type ?? null,
+        needsReview:  r.image.metadata?.needs_review ?? false,
+        similarity:   r.score,
+      }));
+
+      const result: BrowseResult = { total, page, pages, images };
+      return result;
     },
   );
 
   ipcMain.handle(
     "images:get",
-    (_e: IpcMainInvokeEvent, { id }: { id: number }) =>
-      get<ImageDetail>(`/images/${id}`),
+    async (_e: IpcMainInvokeEvent, { id }: { id: number }) => {
+      type RawBackendImage = {
+        id: number; abs_path: string; filename: string;
+        thumbnail_path: string | null; import_status: string;
+        is_orphaned: boolean; date_added: string | null;
+        faiss_id: number | null; model_version: string | null;
+        file_hash: string | null; file_size_bytes: number | null;
+        width_px: number | null; height_px: number | null;
+        relative_path: string | null; folder_name: string | null;
+        metadata: {
+          supplier: string | null; item_no: string | null; order_no: string | null;
+          fabric_type: string | null; construction: string | null;
+          width_min: number | null; width_max: number | null; width_unit: string | null;
+          weight_gsm: number | null; weight_gyd: number | null; tolerance_pct: number | null;
+          needs_review: boolean; no_label_detected: boolean;
+          composition: Array<{
+            material: string; material_raw: string;
+            percentage: number; confidence_tier: number;
+          }>;
+        } | null;
+      };
+      const raw = await get<RawBackendImage>(`/images/${id}`);
+      const detail: ImageDetail = {
+        id:            raw.id,
+        filename:      raw.filename,
+        filePath:      raw.abs_path,
+        thumbnailPath: raw.thumbnail_path,
+        importStatus:  raw.import_status,
+        isOrphaned:    raw.is_orphaned,
+        dateAdded:     raw.date_added ?? "",
+        tags:          [],
+        supplierRaw:   raw.metadata?.supplier ?? null,
+        itemNo:        raw.metadata?.item_no ?? null,
+        weightGsm:     raw.metadata?.weight_gsm ?? null,
+        fabricType:    raw.metadata?.fabric_type ?? null,
+        needsReview:   raw.metadata?.needs_review ?? false,
+        similarity:    null,
+        orderNo:       raw.metadata?.order_no ?? null,
+        construction:  raw.metadata?.construction ?? null,
+        widthMin:      raw.metadata?.width_min ?? null,
+        widthMax:      raw.metadata?.width_max ?? null,
+        widthUnit:     raw.metadata?.width_unit ?? null,
+        weightGyd:     raw.metadata?.weight_gyd ?? null,
+        tolerancePct:  raw.metadata?.tolerance_pct ?? null,
+        composition:   (raw.metadata?.composition ?? []).map(c => ({
+          material:    c.material,
+          materialRaw: c.material_raw,
+          percentage:  c.percentage,
+          tier:        c.confidence_tier as 1 | 2 | 3,
+        })),
+        noLabelDetected:  raw.metadata?.no_label_detected ?? false,
+        manuallyReviewed: false,
+        fileHash:         raw.file_hash,
+        fileSizeBytes:    raw.file_size_bytes,
+        widthPx:          raw.width_px,
+        heightPx:         raw.height_px,
+        faissId:          raw.faiss_id,
+        relativePath:     raw.relative_path,
+        folderName:       raw.folder_name,
+      };
+      return detail;
+    },
   );
 
   // ── Dialogs ──────────────────────────────────────────────────────────────────

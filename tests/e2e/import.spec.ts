@@ -14,9 +14,6 @@ import { test, expect } from '@playwright/test'
 import * as path from 'node:path'
 import { assertFixturesPresent, launchApp, waitForReady, navigateTo, FABRIC_IMAGES } from './helpers'
 
-// ── STUB: Replace with real fixture path when images are available ──────────
-// assertFixturesPresent()
-
 test.describe('Import flow', () => {
 
   test('app starts within 30 seconds', async () => {
@@ -35,15 +32,8 @@ test.describe('Import flow', () => {
     }
   })
 
-  test.skip('adds a folder and shows import progress', async () => {
+  test('adds a folder and shows import progress', async () => {
     /**
-     * STUB — requires real images in tests/e2e/fixtures/fabric_images/
-     *
-     * To enable this test:
-     * 1. Add at least 10 fabric JPEG images to tests/e2e/fixtures/fabric_images/
-     * 2. Remove the test.skip() call
-     * 3. Run: npx playwright test tests/e2e/import.spec.ts
-     *
      * Expected behaviour:
      * - Click "Import" nav item
      * - Click "Add folder"

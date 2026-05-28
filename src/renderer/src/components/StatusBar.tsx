@@ -9,7 +9,7 @@ interface Props {
 
 export function StatusBar({ sidecar, imageCount, isSyncing, onOpenLogs }: Props) {
   return (
-    <div style={{
+    <div data-testid="status-bar" style={{
       height: 26, display: 'flex', alignItems: 'center',
       justifyContent: 'space-between', padding: '0 12px',
       borderTop: '1px solid var(--border)',
@@ -17,7 +17,7 @@ export function StatusBar({ sidecar, imageCount, isSyncing, onOpenLogs }: Props)
       fontSize: 11, color: 'var(--text-muted)',
       flexShrink: 0,
     }}>
-      <span>{imageCount.toLocaleString()} images</span>
+      <span data-testid="image-count">{imageCount.toLocaleString()} images</span>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         {isSyncing && <span style={{ color: 'var(--text)' }}>● Importing</span>}
         {sidecar && <span className="mono">v{sidecar.version}</span>}

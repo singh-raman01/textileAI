@@ -6,7 +6,7 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
 import type {
   ImportProgressEvent, AppSettings, DbStatusResponse,
   AddFolderResult, SearchResult, BrowseResult, BrowseFilters,
-  ImageDetail,
+  ImageDetail, SidecarReadyPayload, SidecarErrorPayload,
 } from '../../shared/types/ipc'
 
 function invoke<T>(channel: string, payload?: unknown): Promise<T> {
@@ -63,6 +63,10 @@ const api = {
     on<ImportProgressEvent>('import:progress', fn),
   onSyncChange: (fn: (e: { type: string; count: number }) => void) =>
     on('sync:change', fn),
+  onSidecarReady: (fn: (data: SidecarReadyPayload) => void) =>
+    on<SidecarReadyPayload>('sidecar:ready', fn),
+  onSidecarError: (fn: (data: SidecarErrorPayload) => void) =>
+    on<SidecarErrorPayload>('sidecar:error', fn),
 } as const
 
 contextBridge.exposeInMainWorld('api', api)

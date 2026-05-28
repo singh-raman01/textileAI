@@ -1,11 +1,18 @@
 """
 TextileSearch — OCR Service
 
-Wraps PaddleOCR v3 for offline label text extraction.
-Handles rotated labels, English + Traditional Chinese text.
+Production backend: RapidOCR running on ONNX Runtime.
 
-Lazy loading — same pattern as embedder.py.
-MockOcrService provides canned responses for testing.
+Why RapidOCR (not PaddleOCR)?
+  - Same underlying detection / recognition models (PP-OCRv4/v5)
+  - Pure ONNX Runtime — no PaddlePaddle Python binding to segfault
+  - Stable on Apple Silicon arm64 under heavy load
+  - Optional CoreML execution provider on macOS = Neural Engine acceleration
+  - ~10x smaller install footprint than paddlepaddle+paddleocr
+
+Public interface is unchanged: `OcrService.load()` / `.extract(path)` returning
+`OcrResult`. The legacy class name `PaddleOcrService` is kept as an alias so
+existing imports/tests keep working.
 """
 
 from __future__ import annotations
@@ -16,24 +23,31 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from PIL import Image
+
 from app.exceptions import OcrModelNotAvailableError, OcrProcessingError
 from app.services.protocols import BoundingBox, OcrResult, OcrProtocol, TextRegion
 
 logger = logging.getLogger(__name__)
 
-PADDLE_LANG: Final[str] = "en"     # "ch" for Chinese labels
-PADDLE_USE_GPU: Final[bool] = False
+OCR_LANG: Final[str] = "en"     # "ch" for Chinese labels
+# Cap the longest side fed to the detector. RapidOCR auto-resizes; this just
+# avoids spending memory on iPhone-sized 4032px photos.
+MAX_OCR_SIDE: Final[int] = 1600
 
 
-class PaddleOcrService:
+class RapidOcrService:
     """
-    Production OCR using PaddleOCR v3.
-    Auto-rotation is enabled (rotate=True) to handle upside-down labels.
+    Production OCR using RapidOCR + ONNX Runtime.
+
+    Lazy load: the OCR engine is constructed in `load()`; if RapidOCR isn't
+    installed, raises `OcrModelNotAvailableError` and the importer pipeline
+    gracefully falls back to mock OCR.
     """
 
     def __init__(self, model_dir: Path) -> None:
         self._model_dir = model_dir
-        self._ocr: object | None = None
+        self._engine: object | None = None
         self._loaded: bool = False
 
     @property
@@ -42,30 +56,28 @@ class PaddleOcrService:
 
     def load(self) -> None:
         try:
-            from paddleocr import PaddleOCR  # type: ignore[import-untyped]
+            from rapidocr import RapidOCR  # type: ignore[import-untyped]
         except ImportError as exc:
             raise OcrModelNotAvailableError(str(self._model_dir)) from exc
 
         try:
-            self._ocr = PaddleOCR(
-                use_angle_cls=True,
-                lang=PADDLE_LANG,
-                use_gpu=PADDLE_USE_GPU,
-                show_log=False,
-            )
+            self._engine = RapidOCR()
         except Exception as exc:
             raise OcrModelNotAvailableError(str(self._model_dir)) from exc
 
         self._loaded = True
-        logger.info("PaddleOCR loaded", extra={"lang": PADDLE_LANG})
+        logger.info("RapidOCR loaded", extra={"lang": OCR_LANG})
 
     def extract(self, image_path: Path) -> OcrResult:
-        if not self._loaded or self._ocr is None:
+        if not self._loaded or self._engine is None:
             raise OcrModelNotAvailableError(str(self._model_dir))
 
         t0 = time.monotonic()
         try:
-            raw = self._ocr.ocr(str(image_path), cls=True)
+            # Pre-resize huge inputs so the detector pipeline doesn't waste
+            # memory on full-res phone photos. RapidOCR accepts numpy arrays.
+            img = _load_and_shrink(image_path, MAX_OCR_SIDE)
+            raw = self._engine(img)  # type: ignore[misc]
         except Exception as exc:
             raise OcrProcessingError(str(image_path), str(exc)) from exc
 
@@ -73,32 +85,48 @@ class PaddleOcrService:
         return _build_result(str(image_path), raw, ms)
 
 
-def _build_result(image_path: str, raw: list[object], duration_ms: float) -> OcrResult:
-    """Convert PaddleOCR raw output to OcrResult."""
+def _load_and_shrink(path: Path, max_side: int) -> object:
+    """
+    Open `path`, downscale if its longest side exceeds `max_side`, and
+    return a numpy RGB array suitable for RapidOCR.
+    """
+    import numpy as np
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    longest = max(w, h)
+    if longest > max_side:
+        scale = max_side / longest
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    return np.asarray(img)
+
+
+def _build_result(image_path: str, raw: object, duration_ms: float) -> OcrResult:
+    """
+    Convert RapidOCR output (`RapidOCROutput` data class with
+    `boxes`, `txts`, `scores`) into our internal OcrResult.
+    """
+    if raw is None:
+        return _empty(image_path, duration_ms)
+
+    boxes = getattr(raw, "boxes", None)
+    txts  = getattr(raw, "txts", None)
+    scores = getattr(raw, "scores", None)
+
+    if boxes is None or txts is None or scores is None or len(txts) == 0:
+        return _empty(image_path, duration_ms)
+
     regions: list[TextRegion] = []
-
-    if not raw or raw[0] is None:
-        return OcrResult(
-            image_path=image_path,
-            text_regions=[],
-            full_text="",
-            mean_confidence=0.0,
-            has_text=False,
-            duration_ms=duration_ms,
-        )
-
-    for line in raw[0]:  # PaddleOCR: list of [bbox, (text, score)]
+    for box, text, score in zip(boxes, txts, scores, strict=False):
         try:
-            bbox_pts = line[0]
-            text: str = line[1][0]
-            conf: float = float(line[1][1])
-            xs = [float(p[0]) for p in bbox_pts]
-            ys = [float(p[1]) for p in bbox_pts]
+            xs = [float(p[0]) for p in box]
+            ys = [float(p[1]) for p in box]
             bb = BoundingBox(
                 x_min=min(xs), y_min=min(ys),
                 x_max=max(xs), y_max=max(ys),
             )
-            regions.append(TextRegion(text=text, confidence=conf, bounding_box=bb))
+            regions.append(
+                TextRegion(text=str(text), confidence=float(score), bounding_box=bb),
+            )
         except (IndexError, TypeError, ValueError) as exc:
             logger.debug("OCR line parse error", extra={"error": str(exc)})
 
@@ -113,6 +141,21 @@ def _build_result(image_path: str, raw: list[object], duration_ms: float) -> Ocr
         has_text=bool(regions),
         duration_ms=duration_ms,
     )
+
+
+def _empty(image_path: str, duration_ms: float) -> OcrResult:
+    return OcrResult(
+        image_path=image_path,
+        text_regions=[],
+        full_text="",
+        mean_confidence=0.0,
+        has_text=False,
+        duration_ms=duration_ms,
+    )
+
+
+# Backwards-compatible alias — tests + main.py import `PaddleOcrService`.
+PaddleOcrService = RapidOcrService
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +189,6 @@ class MockOcrService:
         return True
 
     def extract(self, image_path: Path) -> OcrResult:
-        import time
         t0 = time.monotonic()
         text = self._canned.get(str(image_path), self._default)
         if not text:
@@ -175,16 +217,17 @@ class MockOcrService:
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
+
 assert isinstance(MockOcrService(), OcrProtocol)
 
 
-def init_ocr(model_dir: Path, use_mock: bool = False) -> PaddleOcrService | MockOcrService:
+def init_ocr(model_dir: Path, use_mock: bool = False) -> RapidOcrService | MockOcrService:
     """
-    Factory: returns a MockOcrService when use_mock=True, otherwise a real
-    PaddleOcrService (model loads lazily on first extract call).
+    Factory: returns MockOcrService when use_mock=True, otherwise a real
+    RapidOcrService (engine loads via `.load()`).
     """
     if use_mock:
         logger.info("Using MockOcrService (no OCR model loaded)")
         return MockOcrService()
-    logger.info("Initialising PaddleOCR", extra={"model_dir": str(model_dir)})
-    return PaddleOcrService(model_dir=model_dir)
+    logger.info("Initialising RapidOCR", extra={"model_dir": str(model_dir)})
+    return RapidOcrService(model_dir=model_dir)

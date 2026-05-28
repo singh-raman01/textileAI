@@ -36,6 +36,7 @@ from app.exceptions import (
     EmbeddingFailedError,
     ImageReadError,
     ModelNotAvailableError,
+    OcrModelNotAvailableError,
     OcrProcessingError,
 )
 from app.services.field_parser import parse_label
@@ -112,6 +113,9 @@ class ImportWorker:
         self._progress = ImportProgress()
         self._thread: threading.Thread | None = None
         self._run_start_time: float | None = None
+        # Log "model unavailable" at most once per worker session
+        self._embedder_warning_logged = False
+        self._ocr_warning_logged = False
 
     # -- control -------------------------------------------------------------
 
@@ -292,10 +296,11 @@ class ImportWorker:
             image.faiss_id = faiss_id
             image.model_version = self._embedder.model_version
         except ModelNotAvailableError:
-            logger.warning(
-                "Model unavailable — indexing metadata only",
-                extra={"path": str(path)},
-            )
+            if not self._embedder_warning_logged:
+                logger.warning(
+                    "Embedder model unavailable — indexing without visual embeddings",
+                )
+                self._embedder_warning_logged = True
         except EmbeddingFailedError as exc:
             logger.warning(
                 "Embedding failed",
@@ -320,6 +325,13 @@ class ImportWorker:
             if ocr_result.has_text:
                 parsed = parse_label(ocr_result.full_text)
                 self._persist_metadata(image.id, parsed, session)
+        except OcrModelNotAvailableError:
+            if not self._ocr_warning_logged:
+                logger.warning(
+                    "OCR model unavailable — indexing images without parsed labels",
+                )
+                self._ocr_warning_logged = True
+            # Not fatal — image stored without metadata
         except OcrProcessingError as exc:
             logger.warning(
                 "OCR failed",

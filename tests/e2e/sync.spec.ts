@@ -16,14 +16,8 @@ import { assertFixturesPresent, launchApp, waitForReady, FABRIC_IMAGES } from '.
 
 test.describe('File system sync', () => {
 
-  test.skip('new file in watched folder is auto-indexed', async () => {
+  test('new file in watched folder is auto-indexed', async () => {
     /**
-     * STUB — requires:
-     *  - A watched folder already set up in the app
-     *  - At least one fabric image available to copy
-     *
-     * To enable: remove test.skip(), ensure import test has run first.
-     *
      * Test plan:
      * 1. Note current image count from status bar
      * 2. Copy a new JPEG into the watched folder

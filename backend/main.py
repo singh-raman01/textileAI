@@ -5,8 +5,33 @@ Usage: python main.py --port 8765 --data-dir /path/to/data
 """
 from __future__ import annotations
 
-import logging
 import os
+
+# ── Apple Silicon (MPS) safety net ────────────────────────────────────────────
+# Per Hugging Face / PyTorch official guidance, some ops are not yet
+# implemented for the MPS backend and will raise NotImplementedError or
+# segfault when first invoked. This env var tells PyTorch to silently fall
+# back to a CPU kernel for those ops instead of crashing. Must be set
+# BEFORE `import torch` runs anywhere in the process.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+# ── Multi-library OpenMP collision ────────────────────────────────────────────
+# torch, faiss-cpu, onnxruntime, opencv, etc. all bundle their own copy of
+# libomp.dylib. When more than one is loaded into the same Python process,
+# the OpenMP runtime aborts with:
+#   "OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib
+#    already initialized."
+# On macOS this manifests as a SIGSEGV at the first MPS / FAISS kernel call.
+# `KMP_DUPLICATE_LIB_OK=TRUE` tells the runtime to accept the duplicate
+# instead of aborting — the official Intel/LLVM-documented escape hatch for
+# this exact situation. Must be set BEFORE any ML library imports.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+# Tokenizers parallelism warning suppression — we are single-threaded per
+# request so this isn't a real problem, but the warning is noisy.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+import logging
 import sys
 from pathlib import Path
 
@@ -57,12 +82,61 @@ from app.db.session import init_db
 
 init_db(config.database_url)
 
-# ── 4. Crash recovery — reset in-flight imports ───────────────────────────────
+# ── 4. ML services — MUST come before importing anything that touches FAISS ───
+# Load order matters on Apple Silicon: FAISS-CPU and PyTorch both link
+# against BLAS/LAPACK (Accelerate/OpenBLAS) and fight over thread pools and
+# globals at first touch on arm64 macOS — initialising FAISS first then
+# loading torch+MPS reliably segfaults during the first MPS kernel JIT.
+# So we import + load the embedder BEFORE `app.services.importer`,
+# `app.services.faiss_index`, `app.services.sync`, etc. (any of which
+# transitively pulls in the `faiss` C extension).
+#
+# Strategy: try to load real models at startup. If load fails (missing
+# weights, missing optional deps, broken install), fall back to mock so
+# the app still starts up and the user can browse / queue imports.
+use_mock = os.environ.get("TEXTILE_USE_MOCK_ML", "").lower() == "true"
+
+from app.services.embedder import init_embedder, MockEmbedder, FashionClipEmbedder
+from app.services.ocr import init_ocr, MockOcrService, PaddleOcrService
+from app.exceptions import ModelNotAvailableError, OcrModelNotAvailableError
+
+embedder = init_embedder(
+    cache_dir = config.models_dir,
+    use_mock  = use_mock,
+)
+if isinstance(embedder, FashionClipEmbedder):
+    try:
+        embedder.load()
+    except ModelNotAvailableError as exc:
+        logger.warning(
+            "Embedder model unavailable — falling back to MockEmbedder. "
+            "Visual search will return arbitrary results until weights are installed.",
+            extra={"error": str(exc)},
+        )
+        embedder = MockEmbedder()
+
+ocr_service = init_ocr(
+    model_dir = config.models_dir / "paddleocr",
+    use_mock  = use_mock,
+)
+if isinstance(ocr_service, PaddleOcrService):
+    try:
+        ocr_service.load()
+    except OcrModelNotAvailableError as exc:
+        logger.warning(
+            "OCR model unavailable — falling back to MockOcrService. "
+            "Label fields will not be auto-extracted until OCR is installed.",
+            extra={"error": str(exc)},
+        )
+        ocr_service = MockOcrService()
+
+# ── 5. Crash recovery — reset in-flight imports ───────────────────────────────
+# Now safe to pull in importer (which transitively imports faiss).
 from app.services.importer import reset_in_flight_images
 
 reset_in_flight_images()
 
-# ── 5. Startup file system sync ────────────────────────────────────────────────
+# ── 6. Startup file system sync ────────────────────────────────────────────────
 from app.services.sync import startup_sync
 
 _sync_result = startup_sync()
@@ -75,7 +149,7 @@ logger.info(
     },
 )
 
-# ── 6. FAISS index ─────────────────────────────────────────────────────────────
+# ── 7. FAISS index ─────────────────────────────────────────────────────────────
 from app.services.faiss_index import init_faiss
 from app.exceptions import IndexCorruptedError
 
@@ -90,21 +164,6 @@ except IndexCorruptedError as exc:
     from app.services.faiss_index import FaissIndexManager
     faiss_manager = FaissIndexManager(config.faiss_dir)
     faiss_manager._create_flat()  # type: ignore[attr-defined]
-
-# ── 7. ML services (lazy; model loads on first use) ────────────────────────────
-use_mock = os.environ.get("TEXTILE_USE_MOCK_ML", "").lower() == "true"
-
-from app.services.embedder import init_embedder
-from app.services.ocr import init_ocr
-
-embedder = init_embedder(
-    cache_dir = config.models_dir,
-    use_mock  = use_mock,
-)
-ocr_service = init_ocr(
-    model_dir = config.models_dir / "paddleocr",
-    use_mock  = use_mock,
-)
 
 # ── 8. Import pipeline ─────────────────────────────────────────────────────────
 from app.services.importer import init_importer

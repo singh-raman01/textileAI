@@ -25,26 +25,26 @@ dependencies = [
     "rapidfuzz==3.9.3",
     # Async file I/O
     "aiofiles==24.1.0",
-    "numpy>=1.26,<2.0",
+    # NumPy 2.x is required by current torch/transformers/onnxruntime/rapidocr
+    # and by Pillow >=10.3 (uses numpy.typing.NDArray at import time).
+    "numpy>=1.26",
+    # ML — DINOv2 image embeddings via Hugging Face transformers on
+    # Apple Silicon MPS (bf16). Weights are ~340 MB, downloaded on first run.
+    "torch>=2.12.0",
+    "torchvision>=0.27.0",
+    "transformers>=4.45.0",
+    # OCR — RapidOCR runs PP-OCRv4 detection/recognition models on ONNX
+    # Runtime. Stable on Apple Silicon (unlike paddlepaddle, which segfaults).
+    "rapidocr>=3.8.0",
+    "onnxruntime>=1.20.0",
 ]
 
-# ── Optional dependency groups ──────────────────────────────────────────────
-# Install with:  uv sync --extra ml
-#                uv sync --extra ocr
-#                uv sync --extra ml --extra ocr   (full production install)
+# Optional groups retained for compatibility with old `uv sync --extra ml`
+# invocations from CI scripts; in this repo the core install already
+# includes everything needed.
 [project.optional-dependencies]
-ml = [
-    # FashionCLIP — ViT-B/32 visual embedder
-    # Downloads ~600 MB of weights on first run.
-    "torch>=2.3.0",
-    "transformers>=4.42.0",
-]
-ocr = [
-    # PaddleOCR — label text extraction
-    # Requires the paddlepaddle CPU wheel first:
-    #   uv pip install paddlepaddle --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple
-    "paddleocr>=2.7.3",
-]
+ml  = []
+ocr = []
 
 # ── Development / test dependencies ─────────────────────────────────────────
 # Install with:  uv sync --group dev

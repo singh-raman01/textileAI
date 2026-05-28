@@ -146,7 +146,7 @@ class TestMockEmbedder:
     def test_vector_dim(self, tmp_path: Path) -> None:
         img_path = _make_image_file(tmp_path)
         result = MockEmbedder().embed(img_path)
-        assert len(result.vector) == 512
+        assert len(result.vector) == 768
 
     def test_batch_matches_individual(self, tmp_path: Path) -> None:
         paths = [_make_image_file(tmp_path, f"img{i}.jpg") for i in range(5)]

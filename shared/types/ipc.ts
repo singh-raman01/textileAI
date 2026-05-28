@@ -137,9 +137,11 @@ export interface DbStatusResponse {
   schema_version: number
   image_count:    number
   indexed_count:  number
+  orphaned_count: number
   queued_count:   number
   failed_count:   number
   db_path:        string
+  db_size_mb:     number
 }
 
 // ── IpcInvokeMap — used to type invoke() calls ─────────────────────────────────

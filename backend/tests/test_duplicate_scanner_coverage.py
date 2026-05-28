@@ -10,7 +10,7 @@ from app.db.session import get_session
 from app.services.faiss_index import FaissIndexManager
 
 
-VECTOR_DIM = 512
+VECTOR_DIM = 768
 
 
 class TestDuplicateScannerCoverage:

@@ -26,20 +26,20 @@ from dataclasses import dataclass
 class EmbeddingVector:
     """A single image embedding result."""
     image_path: str
-    vector: list[float]          # 512-dim for FashionCLIP ViT-B/32
+    vector: list[float]          # 768-dim for DINOv2-base
     duration_ms: float
 
 
 @runtime_checkable
 class EmbedderProtocol(Protocol):
     """
-    Produces 512-dimensional float32 embedding vectors from fabric images.
-    Implementations: FashionClipEmbedder (production), MockEmbedder (testing).
+    Produces float32 embedding vectors from fabric images.
+    Implementations: Dinov2Embedder (production), MockEmbedder (testing).
     """
 
     @property
     def vector_dim(self) -> int:
-        """Dimensionality of produced vectors (e.g. 512 for ViT-B/32)."""
+        """Dimensionality of produced vectors (768 for DINOv2-base)."""
         ...
 
     @property

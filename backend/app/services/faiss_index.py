@@ -18,7 +18,7 @@ from app.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-VECTOR_DIM: Final[int] = 512          # FashionCLIP ViT-B/32
+VECTOR_DIM: Final[int] = 768          # DINOv2-base hidden size
 AUTO_MIGRATE_THRESHOLD: Final[int] = 20_000
 IVF_NLIST: Final[int] = 256
 PQ_M: Final[int] = 64

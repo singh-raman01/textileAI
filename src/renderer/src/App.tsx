@@ -32,25 +32,46 @@ export default function App(): JSX.Element {
   const [importProgress, setImportProgress] = useState<ImportProgressEvent | null>(null)
 
   useEffect(() => {
+    let ready = false
+
+    function onReady(s: SidecarReadyPayload) {
+      if (ready) return
+      ready = true
+      clearInterval(poll)
+      setSidecar(s)
+      setAppState('ready')
+      window.api.getSettings().then(s =>
+        i18n.changeLanguage(s['language'] ?? 'en')
+      ).catch(() => {})
+      window.api.dbStatus().then(db =>
+        setImageCount(db.image_count)
+      ).catch(() => {})
+    }
+
+    function onError(msg: string) {
+      if (ready) return
+      ready = true
+      clearInterval(poll)
+      setErrorMsg(msg)
+      setAppState('error')
+    }
+
+    // Event-driven: main process sends sidecar:ready with the correct port
+    const offReady = window.api.onSidecarReady(onReady)
+    const offError = window.api.onSidecarError(({ message }) => onError(message))
+
+    // Fallback polling in case the IPC event is missed
     let attempts = 0
     const poll = setInterval(async () => {
       attempts++
       try {
         const h = await window.api.health()
         if (h.status === 'ok') {
-          clearInterval(poll)
-          setSidecar({ port: 8765, version: h.version, dbPath: '' })
-          setAppState('ready')
-          const s = await window.api.getSettings()
-          await i18n.changeLanguage(s['language'] ?? 'en')
-          const db = await window.api.dbStatus()
-          setImageCount(db.image_count)
+          onReady({ port: 0, version: h.version, dbPath: '' })
         }
       } catch {
         if (attempts >= 30) {
-          clearInterval(poll)
-          setErrorMsg('Backend failed to start. Check the log folder for details.')
-          setAppState('error')
+          onError('Backend failed to start. Check the log folder for details.')
         }
       }
     }, 1000)
@@ -62,7 +83,7 @@ export default function App(): JSX.Element {
       }
     })
 
-    return () => { clearInterval(poll); offProgress() }
+    return () => { clearInterval(poll); offReady(); offError(); offProgress() }
   }, [i18n])
 
   if (appState === 'loading' || appState === 'error') {
@@ -79,7 +100,7 @@ export default function App(): JSX.Element {
   ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--ivory)' }}>
+      <div data-testid="app-ready" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--ivory)' }}>
 
       {/* Top bar */}
       <div style={{
@@ -111,6 +132,7 @@ export default function App(): JSX.Element {
           {navItems.map(({ id, labelKey }) => (
             <button
               key={id}
+              data-nav={id}
               className={`nav-item${page === id ? ' active' : ''}`}
               onClick={() => setPage(id)}
             >

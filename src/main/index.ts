@@ -5,10 +5,10 @@ import {
 } from "@shared/types/ipc";
 import { app, BrowserWindow, shell } from "electron";
 import path from "path";
-import { registerIpcHandlers } from "./ipc";
+import { registerIpcHandlers, registerHistoryAndDuplicateHandlers } from "./ipc";
 import { logError, logInfo, setupLogger } from "./logger";
 import { startSidecar, stopSidecar } from "./sidecar";
-import { setWatcherSidecarPort, stopAllWatchers } from "./watcher";
+import { stopAllWatchers } from "./watcher";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Electron Main Process
@@ -19,19 +19,22 @@ const isDev = !app.isPackaged;
 
 // ── Single instance lock ───────────────────────────────────────────────────────
 // If a second instance is launched, focus the existing window instead.
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-  process.exit(0);
-}
-
-app.on("second-instance", () => {
-  const win = getMainWindow();
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
+// Skip in test mode so each Playwright worker gets a fresh process.
+if (process.env.NODE_ENV !== "test") {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+    process.exit(0);
   }
-});
+
+  app.on("second-instance", () => {
+    const win = getMainWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+}
 
 // ── Global state ──────────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null;
@@ -45,6 +48,7 @@ function getMainWindow(): BrowserWindow | null {
 // On Windows: %APPDATA%\TextileSearch
 // On macOS:   ~/Library/Application Support/TextileSearch
 function getDataDir(): string {
+  if (process.env.TEXTILE_DATA_DIR) return process.env.TEXTILE_DATA_DIR;
   return app.getPath("userData");
 }
 
@@ -102,11 +106,15 @@ async function bootstrap(): Promise<void> {
 
   // Register all IPC handlers before the window renders
   registerIpcHandlers();
+  registerHistoryAndDuplicateHandlers();
 
   // Create the browser window — it shows the loading screen immediately
   mainWindow = createWindow();
 
-  // Start the Python sidecar
+  // Start the Python sidecar. startSidecar() now sets the IPC + watcher
+  // port itself, as soon as it's allocated, so renderer polls during
+  // cold-start hit the right port (and fail silently) instead of the
+  // default 8765 (which floods the log with ECONNREFUSED stack traces).
   try {
     const port = await startSidecar(getDataDir());
 
@@ -124,11 +132,7 @@ async function bootstrap(): Promise<void> {
       dbPath: health.db_path,
     };
 
-    // logInfo('Sending sidecar:ready to renderer', payload)
     mainWindow.webContents.send(IPC.SIDECAR_READY, payload);
-
-    // Initialise the folder watcher (no folders added yet in Phase 0)
-    setWatcherSidecarPort(port);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logError("Failed to start sidecar", { message });

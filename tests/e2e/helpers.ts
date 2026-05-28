@@ -6,6 +6,7 @@
 import { ElectronApplication, Page, _electron as electron } from '@playwright/test'
 import * as path from 'node:path'
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 
 export const FIXTURES = path.join(__dirname, 'fixtures')
 export const FABRIC_IMAGES = path.join(FIXTURES, 'fabric_images')
@@ -34,12 +35,14 @@ export function assertFixturesPresent(): void {
 
 /** Launch the Electron app and return the main window. */
 export async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
+  const tmpDir = path.join(os.tmpdir(), `textile-e2e-${Date.now()}`)
   const app = await electron.launch({
     args: ['.'],
     env: {
       ...process.env,
-      TEXTILE_USE_MOCK_ML: 'false',  // real ML required for E2E
+      TEXTILE_USE_MOCK_ML: 'true',   // mock ML for import/sync; switch to real for search accuracy
       NODE_ENV: 'test',
+      TEXTILE_DATA_DIR: tmpDir,
     },
   })
   const page = await app.firstWindow()

@@ -17,7 +17,7 @@ from app.services.thumbnail import ThumbnailService
 from app.services.importer import ImportWorker, ImportProgress
 
 
-VECTOR_DIM = 512
+VECTOR_DIM = 768
 
 
 def _make_image(directory: Path, name: str = "test.jpg") -> Path:

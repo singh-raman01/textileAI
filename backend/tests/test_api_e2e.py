@@ -401,7 +401,7 @@ class TestImagesSearchEndpoint:
         class FailingEmbedder:
             def embed(self, path: Path):
                 raise EmbeddingFailedError(str(path), "test failure")
-            vector_dim = 512
+            vector_dim = 768
             model_version = "test"
             is_ready = True
             def embed_batch(self, paths):

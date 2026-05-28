@@ -93,6 +93,7 @@ export function SearchPage() {
           {/* Drop zone / thumbnail */}
           <div
             ref={dropRef}
+            data-testid="search-dropzone"
             className={isDragOver ? 'dropzone-active' : ''}
             onDragOver={e => { e.preventDefault(); setIsDragOver(true) }}
             onDragLeave={() => setIsDragOver(false)}
@@ -185,7 +186,7 @@ export function SearchPage() {
             </div>
           )}
           {state === 'results' && results.length > 0 && (
-            <div style={{
+            <div data-testid="results-grid" style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
               gap: 10,
@@ -236,6 +237,7 @@ interface CardProps {
 function ImageCard({ img, isSelected, onClick }: CardProps) {
   return (
     <div
+      data-testid="image-card"
       className={`img-card${isSelected ? ' selected' : ''}`}
       onClick={onClick}
       style={{
@@ -269,6 +271,7 @@ function ImageCard({ img, isSelected, onClick }: CardProps) {
         {/* Similarity badge */}
         {img.similarity !== null && (
           <span
+            data-testid="similarity-badge"
             className={simClass(img.similarity)}
             style={{
               position: 'absolute', top: 5, right: 5,
